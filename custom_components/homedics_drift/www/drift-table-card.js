@@ -18,6 +18,7 @@ const SUFFIX = {
   slots: "-slots",
   now: "-now-playing",
   favorites: "-favorites",
+  stopAfter: "-stop-after",
 };
 
 class DriftTableCard extends HTMLElement {
@@ -207,6 +208,11 @@ class DriftTableCard extends HTMLElement {
         call("switch", on ? "turn_off" : "turn_on", { entity_id: this._found.power });
         return;
       }
+      if (button.dataset.role === "stop-after") {
+        const on = this._state(this._found.stopAfter) === "on";
+        call("switch", on ? "turn_off" : "turn_on", { entity_id: this._found.stopAfter });
+        return;
+      }
       const service = map[button.dataset.act];
       if (service && id) call("media_player", service, { entity_id: id });
     });
@@ -308,7 +314,7 @@ class DriftTableCard extends HTMLElement {
     const playing = this._state(this._found.player) === "playing";
     const transport = this._card.querySelector(".transport");
     if (!transport.childElementCount) {
-      [["prev", "Prev"], ["play", "Play"], ["next", "Next"], ["power", "Power"]].forEach(([act, label]) => {
+      [["prev", "Prev"], ["play", "Play"], ["next", "Next"], ["power", "Power"], ["stop-after", "Stop After"]].forEach(([act, label]) => {
         const button = document.createElement("button");
         button.type = "button";
         button.dataset.role = act;
@@ -322,6 +328,13 @@ class DriftTableCard extends HTMLElement {
         button.textContent = powerOn ? "Power On" : "Power Off";
         button.classList.toggle("on", powerOn);
         button.disabled = false;
+        return;
+      }
+      if (button.dataset.role === "stop-after") {
+        const held = this._state(this._found.stopAfter) === "on";
+        button.textContent = held ? "Stop After On" : "Stop After";
+        button.classList.toggle("on", held);
+        button.disabled = !this._found.stopAfter;
         return;
       }
       if (button.dataset.role === "play") {

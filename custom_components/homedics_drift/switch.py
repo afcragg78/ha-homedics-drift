@@ -25,6 +25,7 @@ async def async_setup_entry(
         [
             DriftPowerSwitch(coordinator),
             DriftCleanBeforeSwitch(coordinator),
+            DriftStopAfterSwitch(coordinator),
             DriftFavoriteSwitch(coordinator),
         ]
     )
@@ -132,6 +133,43 @@ class DriftCleanBeforeSwitch(DriftEntity, RestoreEntity, SwitchEntity):
     async def async_turn_off(self, **kwargs: object) -> None:
         """Choose patterns without wiping first."""
         await self.coordinator.async_set_clean_before(False)
+
+
+class DriftStopAfterSwitch(DriftEntity, RestoreEntity, SwitchEntity):
+    """Pause when a design finishes. Power and the lamp stay as they are."""
+
+    _attr_translation_key = "stop_after"
+    _attr_icon = "mdi:pause-box-outline"
+
+    def __init__(self, coordinator: DriftCoordinator) -> None:
+        """Identify the switch."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}-stop-after"
+
+    @property
+    def is_on(self) -> bool:
+        """Remembered choice. The table is not asked until a design finishes."""
+        return self.coordinator.stop_after.enabled
+
+    @override
+    async def async_added_to_hass(self) -> None:
+        """Restore the last choice. Off until the user has turned it on."""
+        await super().async_added_to_hass()
+        last = await self.async_get_last_state()
+        self.coordinator.stop_after.enabled = last is not None and last.state == STATE_ON
+
+    @override
+    async def async_turn_on(self, **kwargs: object) -> None:
+        """Hold the sand still after the design that is playing now."""
+        self.coordinator.stop_after.enabled = True
+        self.async_write_ha_state()
+
+    @override
+    async def async_turn_off(self, **kwargs: object) -> None:
+        """Let the table continue to the next design."""
+        self.coordinator.stop_after.enabled = False
+        self.coordinator.stop_after.pausing = False
+        self.async_write_ha_state()
 
 
 class DriftFavoriteSwitch(DriftEntity, SwitchEntity):

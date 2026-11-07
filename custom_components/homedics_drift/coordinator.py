@@ -105,6 +105,7 @@ from .protocol import (
     PowerQueue,
     percent_to_speed_raw,
     playback_allowed,
+    StopAfterWatch,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -158,6 +159,7 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         self._inbox_unsub: Any = None
         self._seen_pattern_id: int | None = None
         self._clean_follow = 0
+        self.stop_after = StopAfterWatch()
         self.ai_prompt = ""
         self.ai_status = "idle"
         self.ai_error = ""
@@ -349,7 +351,18 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
             if message.state.pattern_id != self._seen_pattern_id:
                 self._seen_pattern_id = message.state.pattern_id
                 self.preview_at = datetime.now(timezone.utc)
+            pause_finished = self.stop_after.observe(
+                session_on=self.session_on,
+                drawing=message.state.drawing,
+                progress=message.state.progress,
+                pattern_id=message.state.pattern_id,
+            )
             self.async_set_updated_data(message.state)
+            if pause_finished:
+                self.hass.async_create_task(
+                    self._pause_finished_design(),
+                    name=f"{DOMAIN}-stop-after-{self.address}",
+                )
             return
         if message.kind is Kind.LIGHT_MODE and message.light_brightness is not None:
             self._apply_light_mode(message)
@@ -568,8 +581,23 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
                     await self.async_send(play_pause())
                     self._replace(status=1)
 
+    def authorize_stop_after(self, pattern_changes: int = 1) -> None:
+        """The user chose a design or pressed play. That one may run."""
+        self.stop_after.authorize(pattern_changes)
+
+    async def _pause_finished_design(self) -> None:
+        """Pause only. Power stays on and the lamp is left as it is."""
+        async with self._command_lock:
+            if not self.stop_after.enabled or not playback_allowed(self.session_on):
+                return
+            if self.data is None or not self.data.drawing:
+                return
+            await self.async_send(play_pause())
+            self._replace(status=0)
+
     async def async_toggle_playback(self) -> None:
         """Send play/pause. This does not change the power switch."""
+        self.authorize_stop_after()
         async with self._command_lock:
             if not playback_allowed(self.session_on):
                 return
@@ -578,12 +606,14 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
             self._replace(status=0 if drawing else 1)
 
     async def async_next(self) -> None:
+        self.authorize_stop_after()
         async with self._command_lock:
             if not playback_allowed(self.session_on):
                 return
             await self.async_send(next_pattern())
 
     async def async_previous(self) -> None:
+        self.authorize_stop_after()
         async with self._command_lock:
             if not playback_allowed(self.session_on):
                 return
@@ -684,6 +714,7 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
 
     async def async_select_playlist(self, label: str) -> None:
         """Draw the playlist the table reported under ``label``."""
+        self.authorize_stop_after()
         async with self._command_lock:
             await self._select_playlist(label)
 
@@ -708,6 +739,7 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
 
     async def async_select_pattern(self, label: str) -> None:
         """Play one stored pattern. This does not change the power switch."""
+        self.authorize_stop_after(2 if self.library.clean_before else 1)
         async with self._command_lock:
             self._require_awake()
             pattern_id = None
@@ -1007,6 +1039,7 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
 
     async def async_clean_sand(self) -> None:
         """Play the clean pattern. Power stays wherever the switch left it."""
+        self.authorize_stop_after()
         if not self.session_on:
             raise HomeAssistantError("Drift power is off")
         async with self._command_lock:
@@ -1343,6 +1376,7 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         """Start the pattern only while Power is already on."""
         if not play or not self.session_on:
             return False
+        self.authorize_stop_after()
         async with self._command_lock:
             if not self.session_on:
                 return False
