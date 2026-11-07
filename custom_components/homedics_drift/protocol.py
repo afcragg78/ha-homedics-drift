@@ -391,14 +391,129 @@ def light_mode(
 
 def fixed_color(red: int, green: int, blue: int, brightness_level: int) -> list[Packet]:
     """Three-packet recipe that keeps a custom colour after disconnect."""
+    return lamp_on_packets(
+        level=brightness_level,
+        color=(red, green, blue),
+        color_name="Temp",
+        shifting=False,
+        shift_time=0,
+        breathing=False,
+        from_off=True,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class LampHold:
+    """Lamp command waiting for the table to echo it.
+
+    The 2 Hz status packet can still carry the previous brightness after the
+    lamp has physically switched. Holding the command stops that stale report
+    from turning the Home Assistant toggle back on, or back off.
+    """
+
+    on: bool
+    level: int
+
+
+def reconcile_lamp(reported: int, hold: LampHold | None) -> tuple[int, bool, LampHold | None]:
+    """Combine a reported brightness with a command that has not been echoed.
+
+    Brightness 0 is off. A held off command stays off while the report is
+    still non-zero. A held on command stays on while the report is still 0.
+    A report that agrees with the command clears the hold.
+    """
+    reported = max(0, min(100, int(reported)))
+    if hold is None:
+        return reported, reported > 0, None
+    if hold.on:
+        if reported > 0:
+            return reported, True, None
+        return max(1, hold.level), True, hold
+    if reported <= 0:
+        return 0, False, None
+    return 0, False, hold
+
+
+def parse_light_mode_echo(arguments: bytes) -> tuple[bool, int, bool, int] | None:
+    """Parse ``0x31/4``, the table's echo of light mode.
+
+    The layout matches ``0x11/4``: shifting, shift time in seconds, breathing,
+    brightness 0..100. Brightness 0 is the lamp off.
+    """
+    reader = _Reader(arguments)
+    try:
+        shifting = reader.boolean()
+        shift_time = reader.u16()
+        breathing = reader.boolean()
+        level = reader.u8()
+    except ProtocolError:
+        return None
+    return shifting, shift_time, breathing, max(0, min(100, level))
+
+
+def resolved_lamp_level(requested: int | None, remembered: int) -> int:
+    """Brightness to use when turning the lamp on.
+
+    An omitted or zero request restores the last non-zero level, or 100 when
+    the table has never reported one. The result is always 1..100.
+    """
+    if requested is not None and requested > 0:
+        return max(1, min(100, int(requested)))
+    if remembered > 0:
+        return max(1, min(100, int(remembered)))
+    return 100
+
+
+def lamp_on_packets(
+    *,
+    level: int,
+    color: tuple[int, int, int],
+    color_name: str,
+    shifting: bool,
+    shift_time: int,
+    breathing: bool,
+    from_off: bool,
+) -> list[Packet]:
+    """Commands that turn the lamp on or change its persisted brightness.
+
+    ``0x14/7`` can dim the lamp to zero, and on a ST-300 it does not bring the
+    lamp back. Turning on resends the colour (``0x14/15`` then ``0x14/13``)
+    and light mode ``0x11/4`` with a non-zero brightness. A later brightness
+    change uses ``0x11/4`` as well, keeping the shifting and breathing flags.
+    """
+    level = max(1, min(100, int(level)))
+    if not from_off:
+        return [
+            light_mode(
+                shifting=shifting,
+                shift_time=shift_time,
+                breathing=breathing,
+                brightness_level=level,
+            )
+        ]
+    red, green, blue = color
+    name = color_name if color_name and not is_raw_playlist_id(color_name) else "Temp"
+    # 0x14/15 stores the colour as "Temp". Selecting that entry, then 0x11/4
+    # with shifting off, is what makes the colour stick. A named palette
+    # colour is selected as-is and keeps the previous light-mode flags.
+    if name == "Temp":
+        return [
+            show_color(red, green, blue, enabled=True),
+            select_color("Temp"),
+            light_mode(
+                shifting=False,
+                shift_time=0,
+                breathing=False,
+                brightness_level=level,
+            ),
+        ]
     return [
-        show_color(red, green, blue, enabled=True),
-        select_color("Temp"),
+        select_color(name),
         light_mode(
-            shifting=False,
-            shift_time=0,
-            breathing=False,
-            brightness_level=brightness_level,
+            shifting=shifting,
+            shift_time=shift_time,
+            breathing=breathing,
+            brightness_level=level,
         ),
     ]
 
@@ -505,6 +620,7 @@ class DriftState:
     controller_version: str = ""
     driver_version: str = ""
     power_on: bool | None = None
+    lamp_on: bool = False
 
     @property
     def drawing(self) -> bool:
@@ -534,6 +650,7 @@ def _parse_state(reader: _Reader) -> DriftState | None:
         playlist_id=playlist_id,
         pattern_id=pattern_id,
         progress=progress / 10000.0,
+        lamp_on=brightness_level > 0,
     )
     status = reader._optional(reader.u8)
     if status is None:
@@ -566,6 +683,14 @@ def _parse_state(reader: _Reader) -> DriftState | None:
     return state
 
 
+def is_raw_playlist_id(value: str | None) -> bool:
+    """True for numeric ids such as the app's millisecond timestamps.
+
+    Those strings are how the table addresses a playlist. They are not names.
+    """
+    return bool(value) and value.isdigit() and len(value) >= 8
+
+
 @dataclass(frozen=True, slots=True)
 class Playlist:
     """One playlist reported by the table."""
@@ -577,7 +702,7 @@ class Playlist:
 
     @property
     def label(self) -> str:
-        if self.name:
+        if self.name and not is_raw_playlist_id(self.name):
             return self.name
         return f"Playlist {self.index}"
 
@@ -587,6 +712,7 @@ class _Draft:
     name: str | None
     pattern_ids: tuple[int, ...]
     index: int | None = None
+    protocol_id: str | None = None
 
 
 def _read_named(reader: _Reader, count: int) -> list[_Draft]:
@@ -622,6 +748,29 @@ def _layouts(payload: bytes) -> list[_Draft] | None:
         reader.u8()
         return _read_named(reader, reader.u8())
 
+    def id_then_name(reader: _Reader) -> list[_Draft]:
+        """``page, count, count × (id, name, pattern ids)``.
+
+        The official app addresses playlists with a numeric string, often a
+        millisecond timestamp, and can send the human name as the next string.
+        Accept this only when the first string is that kind of id, so a normal
+        name-plus-patterns page is not split in half.
+        """
+        reader.u8()
+        count = reader.u8()
+        drafts: list[_Draft] = []
+        for _ in range(count):
+            ident = reader.text()
+            name = reader.text() or None
+            if not is_raw_playlist_id(ident):
+                raise ProtocolError("playlist id is not a raw id")
+            if name and is_raw_playlist_id(name):
+                name = None
+            drafts.append(
+                _Draft(name=name, pattern_ids=tuple(reader.u16_array()), protocol_id=ident)
+            )
+        return drafts
+
     def indexed(reader: _Reader) -> list[_Draft]:
         reader.u8()
         return _read_indexed(reader, reader.u8())
@@ -635,7 +784,7 @@ def _layouts(payload: bytes) -> list[_Draft] | None:
         count = reader.u8()
         return [_Draft(name=reader.text() or None, pattern_ids=()) for _ in range(count)]
 
-    for parse in (named, indexed, indices, names):
+    for parse in (id_then_name, named, indexed, indices, names):
         parsed = attempt(parse)
         if parsed is not None:
             return parsed
@@ -651,6 +800,7 @@ class Kind(StrEnum):
     REQUESTS_TIME = "requests_time"
     STATE = "state"
     PLAYLIST = "playlist"
+    LIGHT_MODE = "light_mode"
     PLAYLIST_RESET = "playlist_reset"
     UPLOAD_MISSING = "upload_missing"
     UPLOAD_STARTED = "upload_started"
@@ -675,6 +825,10 @@ class Message:
     alarm_kind: int | None = None
     alarm_codes: list[int] | None = None
     playlists: list[Playlist] | None = None
+    light_shifting: bool | None = None
+    light_shift_time: int | None = None
+    light_breathing: bool | None = None
+    light_brightness: int | None = None
 
     @property
     def upload_succeeded(self) -> bool:
@@ -693,6 +847,19 @@ def decode(packet: Packet, *, next_playlist_index: int = 1) -> Message:
         return Message(Kind.INIT_COMPLETE, packet)
     if command == 0x32 and action == 2:
         return Message(Kind.REQUESTS_TIME, packet)
+    if command == 0x31 and action == 4:
+        parsed = parse_light_mode_echo(packet.arguments)
+        if parsed is None:
+            return Message(Kind.OTHER, packet)
+        shifting, shift_time, breathing, level = parsed
+        return Message(
+            Kind.LIGHT_MODE,
+            packet,
+            light_shifting=shifting,
+            light_shift_time=shift_time,
+            light_breathing=breathing,
+            light_brightness=level,
+        )
     if command == CMD_STATE and action == 1:
         state = _parse_state(_Reader(packet.arguments))
         if state is None:
@@ -750,7 +917,13 @@ def _decode_playlist(packet: Packet, next_index: int) -> Message:
     for draft in drafts:
         use_index = draft.index if draft.index is not None else index
         name = draft.name or None
-        protocol_id = name if name else str(use_index)
+        if name and is_raw_playlist_id(name):
+            protocol_id = draft.protocol_id or name
+            name = None
+        elif draft.protocol_id:
+            protocol_id = draft.protocol_id
+        else:
+            protocol_id = name if name else str(use_index)
         playlists.append(
             Playlist(
                 protocol_id=protocol_id,

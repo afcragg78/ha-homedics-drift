@@ -30,8 +30,14 @@ from custom_components.homedics_drift.protocol import (
     end_upload,
     fixed_color,
     is_drift_name,
+    is_raw_playlist_id,
+    LampHold,
+    lamp_on_packets,
     light_mode,
+    parse_light_mode_echo,
+    reconcile_lamp,
     normalize_advertised_name,
+    resolved_lamp_level,
     pattern_page,
     percent_to_speed_raw,
     next_pattern,
@@ -398,6 +404,137 @@ def test_garbage_playlist_payload_does_not_invent_entries() -> None:
     catalogue = PlaylistCatalogue()
     catalogue.ingest(_playlist_packet(3, b"\xff\xff\xff"))
     assert catalogue.playlists == []
+
+
+def test_turning_the_lamp_on_restores_colour_and_nonzero_brightness() -> None:
+    assert resolved_lamp_level(None, remembered=0) == 100
+    assert resolved_lamp_level(0, remembered=40) == 40
+    assert resolved_lamp_level(80, remembered=40) == 80
+
+    packets = lamp_on_packets(
+        level=resolved_lamp_level(None, remembered=0),
+        color=(255, 255, 255),
+        color_name="Temp",
+        shifting=True,
+        shift_time=9,
+        breathing=True,
+        from_off=True,
+    )
+    assert len(packets) == 3
+    show, select, mode = packets
+    assert show.data[:2] == bytes((0x0F, 0x01))
+    assert show.data[2:5] == bytes((255, 255, 255))
+    assert select.data[0] == 13
+    assert b"Temp\x00" in select.data
+    assert mode.data[0] == 4
+    assert mode.data[-1] == 100
+    assert all(packet.data[-1] != 0 for packet in packets if packet.data[0] == 4)
+
+
+def test_brightness_change_while_on_uses_light_mode() -> None:
+    packets = lamp_on_packets(
+        level=40,
+        color=(1, 2, 3),
+        color_name="c0",
+        shifting=True,
+        shift_time=12,
+        breathing=False,
+        from_off=False,
+    )
+    assert len(packets) == 1
+    assert packets[0].data == bytes((4, 1, 12, 0, 0, 40))
+
+
+def test_named_palette_colour_is_reselected_when_the_lamp_comes_on() -> None:
+    packets = lamp_on_packets(
+        level=55,
+        color=(9, 8, 7),
+        color_name="c0",
+        shifting=True,
+        shift_time=4,
+        breathing=False,
+        from_off=True,
+    )
+    assert [packet.data[0] for packet in packets] == [13, 4]
+    assert b"c0\x00" in packets[0].data
+    assert packets[1].data[-1] == 55
+    assert packets[1].data[1] == 1
+
+
+def _nul(text: str) -> bytes:
+    return text.encode("ascii") + b"\x00"
+
+
+def test_stale_on_status_does_not_undo_lamp_off() -> None:
+    off = LampHold(on=False, level=0)
+    level, lamp_on, hold = reconcile_lamp(80, off)
+    assert (level, lamp_on, hold) == (0, False, off)
+    level, lamp_on, hold = reconcile_lamp(0, off)
+    assert (level, lamp_on, hold) == (0, False, None)
+
+
+def test_stale_off_status_does_not_undo_lamp_on() -> None:
+    on = LampHold(on=True, level=100)
+    level, lamp_on, hold = reconcile_lamp(0, on)
+    assert (level, lamp_on, hold) == (100, True, on)
+    level, lamp_on, hold = reconcile_lamp(90, on)
+    assert (level, lamp_on, hold) == (90, True, None)
+
+
+def test_uncommanded_brightness_zero_is_off() -> None:
+    assert reconcile_lamp(0, None) == (0, False, None)
+    assert reconcile_lamp(40, None) == (40, True, None)
+
+
+def test_light_mode_echo_brightness_zero_is_off() -> None:
+    # 0x31/4: shifting off, shift time 0, breathing off, brightness 0.
+    packet = Packet(0x31, bytes((4, 0, 0, 0, 0, 0)))
+    message = PlaylistCatalogue().ingest(packet)
+    assert message.kind is Kind.LIGHT_MODE
+    assert message.light_brightness == 0
+    assert message.light_shifting is False
+    assert parse_light_mode_echo(packet.arguments) == (False, 0, False, 0)
+    assert reconcile_lamp(message.light_brightness or 0, None)[1] is False
+
+
+def test_running_state_brightness_zero_means_lamp_off() -> None:
+    # Same shape as the published running-state vector, with brightness forced to 0.
+    raw = bytearray(_unhex(next(item["hex"] for item in VECTORS["table_to_host"] if item["name"] == "running_state")))
+    raw[4] = 0
+    raw[-1] = sum(raw[:-1]) & 0xFF
+    message = PlaylistCatalogue().ingest(PacketParser().feed(bytes(raw))[0])
+    assert message.state is not None
+    assert message.state.brightness == 0
+    assert message.state.lamp_on is False
+
+
+def test_timestamp_playlist_ids_are_not_shown_as_names() -> None:
+    stamp = "1666040602046"
+    assert is_raw_playlist_id(stamp)
+    # Id only, then an empty pattern list. The string is the wire id.
+    payload = bytes((0x00, 0x01)) + _nul(stamp) + bytes((0x00,))
+    catalogue = PlaylistCatalogue()
+    catalogue.ingest(_playlist_packet(3, payload))
+    playlist = catalogue.playlists[0]
+    assert playlist.protocol_id == stamp
+    assert playlist.label == "Playlist 1"
+    assert catalogue.options()[0][0] == "Playlist 1"
+    assert stamp not in catalogue.options()[0][0]
+    assert catalogue.label_for(stamp) == "Playlist 1"
+
+
+def test_playlist_timestamp_id_keeps_a_separate_name() -> None:
+    stamp = "1666040602046"
+    payload = bytes((0x00, 0x01)) + _nul(stamp) + _nul("Evening") + bytes((0x01, 0x07, 0x00))
+    catalogue = PlaylistCatalogue()
+    catalogue.ingest(_playlist_packet(3, payload))
+    playlist = catalogue.playlists[0]
+    assert playlist.protocol_id == stamp
+    assert playlist.name == "Evening"
+    assert playlist.label == "Evening"
+    assert playlist.pattern_ids == (7,)
+    assert catalogue.label_for(stamp) == "Evening"
+    assert stamp not in {label for label, _item in catalogue.options()}
 
 
 def test_upload_stored_is_the_only_success_signal() -> None:

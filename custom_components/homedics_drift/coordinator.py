@@ -33,11 +33,15 @@ from .protocol import (
     CMD_PLAYLIST_LIST,
     DriftState,
     Kind,
+    LampHold,
+    Message,
     PlaylistCatalogue,
     alarm_text,
     brightness,
     draw_playlist,
     fixed_color,
+    lamp_on_packets,
+    reconcile_lamp,
     next_pattern,
     play_pause,
     power,
@@ -79,6 +83,9 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         self.address = entry.data["address"]
         self.catalogue = PlaylistCatalogue()
         self.lamp_brightness = 100
+        self.lamp_color: tuple[int, int, int] = (255, 255, 255)
+        self.lamp_color_name = "Temp"
+        self._lamp_hold: LampHold | None = None
         self._client: BleakClientWithServiceCache | None = None
         self._device: BLEDevice | None = None
         self._parser = PacketParser()
@@ -232,9 +239,11 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
             self._publish()
             return
         if message.kind is Kind.STATE and message.state is not None:
-            if message.state.brightness > 0:
-                self.lamp_brightness = message.state.brightness
+            self._apply_lamp_report(message.state, message.state.brightness)
             self.async_set_updated_data(message.state)
+            return
+        if message.kind is Kind.LIGHT_MODE and message.light_brightness is not None:
+            self._apply_light_mode(message)
             return
         if message.kind in (Kind.PLAYLIST, Kind.PLAYLIST_RESET):
             self._publish()
@@ -254,6 +263,30 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
             if key not in self._unknown_playlists:
                 self._unknown_playlists.add(key)
                 _LOGGER.debug("Unrecognized Drift playlist packet: %s", key)
+
+    def _apply_lamp_report(self, state: DriftState, reported: int) -> None:
+        """Publish lamp on/off without letting a stale status undo a command."""
+        level, lamp_on, self._lamp_hold = reconcile_lamp(reported, self._lamp_hold)
+        state.brightness = level
+        state.lamp_on = lamp_on
+        if self._lamp_hold is None and lamp_on and level > 0:
+            self.lamp_brightness = level
+            self.lamp_color = state.color
+            if state.color_name:
+                self.lamp_color_name = state.color_name
+
+    def _apply_light_mode(self, message: Message) -> None:
+        """Apply the table's ``0x31/4`` light-mode echo. Brightness 0 is off."""
+        if self.data is None or message.light_brightness is None:
+            return
+        if message.light_shifting is not None:
+            self.data.shifting = message.light_shifting
+        if message.light_shift_time is not None:
+            self.data.shift_time = message.light_shift_time
+        if message.light_breathing is not None:
+            self.data.breathing = message.light_breathing
+        self._apply_lamp_report(self.data, message.light_brightness)
+        self.async_set_updated_data(self.data)
 
     def _publish(self) -> None:
         if self.data is not None:
@@ -340,11 +373,53 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         self._replace(speed_raw=raw)
 
     async def async_set_brightness(self, level: int) -> None:
+        """Dim with ``0x14/7``. Zero is what turns the ST-300 lamp off."""
         level = max(0, min(100, int(level)))
         await self.async_send(brightness(level))
         if level > 0:
             self.lamp_brightness = level
-        self._replace(brightness=level)
+            self._lamp_hold = LampHold(True, level)
+            self._replace(brightness=level, lamp_on=True)
+            return
+        self._lamp_hold = LampHold(False, 0)
+        self._replace(brightness=0, lamp_on=False)
+
+    async def async_turn_lamp_on(self, level: int) -> None:
+        """Turn the lamp on with ``0x11/4`` and, from off, the last colour.
+
+        The toggle is updated as soon as the write finishes. A status packet
+        that still reports the old brightness does not undo that until the
+        table echoes the new level.
+        """
+        level = max(1, min(100, int(level)))
+        state = self.data
+        from_off = state is None or not state.lamp_on
+        for packet in lamp_on_packets(
+            level=level,
+            color=self.lamp_color,
+            color_name=self.lamp_color_name,
+            shifting=bool(state and state.shifting),
+            shift_time=int(state.shift_time) if state else 0,
+            breathing=bool(state and state.breathing),
+            from_off=from_off,
+        ):
+            await self.async_send(packet)
+        self.lamp_brightness = level
+        self._lamp_hold = LampHold(True, level)
+        if from_off and (not self.lamp_color_name or self.lamp_color_name == "Temp"):
+            self._replace(
+                brightness=level,
+                lamp_on=True,
+                color=self.lamp_color,
+                color_name="Temp",
+                shifting=False,
+                breathing=False,
+                shift_time=0,
+            )
+        elif from_off:
+            self._replace(brightness=level, lamp_on=True, color_name=self.lamp_color_name)
+        else:
+            self._replace(brightness=level, lamp_on=True)
 
     async def async_set_color(self, rgb: tuple[int, int, int], level: int) -> None:
         """Store a fixed colour as palette entry Temp so it survives disconnect."""
@@ -353,10 +428,14 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         for packet in fixed_color(red, green, blue, level):
             await self.async_send(packet)
         self.lamp_brightness = level
+        self.lamp_color = (red, green, blue)
+        self.lamp_color_name = "Temp"
+        self._lamp_hold = LampHold(True, level)
         self._replace(
             color=(red, green, blue),
             color_name="Temp",
             brightness=level,
+            lamp_on=True,
             shifting=False,
             breathing=False,
             shift_time=0,

@@ -15,6 +15,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .coordinator import DriftConfigEntry, DriftCoordinator
 from .entity import DriftEntity
+from .protocol import resolved_lamp_level
 
 
 def _table_to_ha(level: int) -> int:
@@ -52,12 +53,14 @@ class DriftLight(DriftEntity, LightEntity):
 
     @property
     def is_on(self) -> bool:
-        """True when the reported brightness is above zero."""
-        return self._state.brightness > 0
+        """Lamp power. Brightness 0 and a held off command are off."""
+        return self._state.lamp_on
 
     @property
     def brightness(self) -> int | None:
         """Home Assistant brightness, 1..255, from the table's 0..100 scale."""
+        if not self._state.lamp_on:
+            return None
         level = _table_to_ha(self._state.brightness)
         return level or None
 
@@ -68,18 +71,20 @@ class DriftLight(DriftEntity, LightEntity):
 
     @override
     async def async_turn_on(self, **kwargs: Any) -> None:
-        """Set colour, brightness, or both. Colour is stored as palette Temp."""
-        current = self._state.brightness or self.coordinator.lamp_brightness or 100
-        if ATTR_BRIGHTNESS in kwargs:
-            level = _ha_to_table(kwargs[ATTR_BRIGHTNESS])
-        else:
-            level = current
-        if level <= 0:
-            level = self.coordinator.lamp_brightness or 100
+        """Turn the lamp on, or set colour and brightness.
+
+        With no brightness, the last non-zero level is restored (100 if the
+        table has not reported one). From off, that is ``0x14/15``, ``0x14/13``
+        and ``0x11/4``, not the plain brightness write used to turn the lamp off.
+        """
+        requested = (
+            _ha_to_table(kwargs[ATTR_BRIGHTNESS]) if ATTR_BRIGHTNESS in kwargs else None
+        )
+        level = resolved_lamp_level(requested, self.coordinator.lamp_brightness)
         if ATTR_RGB_COLOR in kwargs:
             await self.coordinator.async_set_color(kwargs[ATTR_RGB_COLOR], level)
             return
-        await self.coordinator.async_set_brightness(level)
+        await self.coordinator.async_turn_lamp_on(level)
 
     @override
     async def async_turn_off(self, **kwargs: Any) -> None:
