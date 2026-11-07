@@ -26,6 +26,10 @@ jobs:
         uses: hacs/action@main
         with:
           category: integration
+          # These three look at GitHub repository settings, not the
+          # integration files. Description and topics are set on the
+          # repository, and the license API reads the default branch.
+          ignore: description topics license
 
   tests:
     name: Protocol tests
