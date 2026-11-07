@@ -20,7 +20,11 @@ async def async_setup_entry(
     """Create the folder buttons."""
     coordinator = entry.runtime_data
     async_add_entities(
-        [DriftRefreshButton(coordinator), DriftUploadButton(coordinator)]
+        [
+            DriftRefreshButton(coordinator),
+            DriftUploadButton(coordinator),
+            DriftCleanButton(coordinator),
+        ]
     )
 
 
@@ -56,3 +60,30 @@ class DriftUploadButton(DriftEntity, ButtonEntity):
     async def async_press(self) -> None:
         """Send the chosen file. Dropping a file in the folder does not do this."""
         await self.coordinator.async_upload_inbox()
+
+
+class DriftCleanButton(DriftEntity, ButtonEntity):
+    """Play the table's clean pattern, or a full spiral kept at id 50000.
+
+    Unavailable while Power is off, and pressing it does not turn Power on.
+    """
+
+    _attr_translation_key = "clean_sand"
+    _attr_icon = "mdi:broom"
+
+    def __init__(self, coordinator: DriftCoordinator) -> None:
+        """Identify the button."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}-clean-sand"
+
+    @property
+    def available(self) -> bool:
+        """Greyed out while the power switch is off."""
+        return super().available and self.coordinator.session_on
+
+    @override
+    async def async_press(self) -> None:
+        """Wipe the sand. Power is left alone."""
+        if not self.coordinator.session_on:
+            return
+        await self.coordinator.async_clean_sand()

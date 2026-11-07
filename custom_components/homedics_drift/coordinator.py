@@ -37,15 +37,22 @@ from .const import (
 from .patterns import (
     STORAGE_CAP,
     PatternLibrary,
+    CleanList,
     PatternRejected,
     allocate_id,
+    choose_clean_upload_id,
+    cleaning_spiral,
+    clean_play_order,
     deletion_refusal,
+    find_stock_clean,
     inbox_names,
     label_patterns,
     paginate,
     path_under_config,
     resend_indexes,
+    spiral_thr,
     thr_to_wire,
+    wire_point,
 )
 from .preview import render_thr
 from .protocol import (
@@ -130,6 +137,7 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         self.preview_at: datetime | None = None
         self._inbox_unsub: Any = None
         self._seen_pattern_id: int | None = None
+        self._clean_follow = 0
         self._client: BleakClientWithServiceCache | None = None
         self._device: BLEDevice | None = None
         self._parser = PacketParser()
@@ -473,6 +481,7 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         """
         requested = bool(on)
         if not requested:
+            self._clean_follow += 1
             self._remember_lamp()
         self.session_on = requested
         self.session_settled = False
@@ -677,6 +686,24 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
                     break
             if pattern_id is None:
                 raise HomeAssistantError(f"Unknown Drift pattern: {label}")
+            clean_id = None
+            if self.library.clean_before:
+                clean_id = await self._ensure_clean_id()
+                if not self.session_on:
+                    return
+            order = clean_play_order(
+                pattern_id, clean_id, clean_before=self.library.clean_before
+            )
+            if order == [clean_id, pattern_id]:
+                self._clean_follow += 1
+                token = self._clean_follow
+                await self.async_send(draw_pattern(clean_id))
+                self._replace(pattern_id=clean_id, status=1)
+                self.hass.async_create_task(
+                    self._play_after_clean(token, pattern_id, clean_id),
+                    name=f"{DOMAIN}-clean-then-{self.address}",
+                )
+                return
             await self.async_send(draw_pattern(pattern_id))
             self._replace(pattern_id=pattern_id, status=1)
 
@@ -887,6 +914,92 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
             if predicate(notice):
                 return notice
 
+    def _stock_clean_id(self) -> int | None:
+        lists = [
+            CleanList(item.index, item.name, item.pattern_ids)
+            for item in self.catalogue.playlists
+        ]
+        return find_stock_clean(lists, self.library.names(), set(self.patterns.pattern_ids))
+
+    async def _ensure_clean_id(self) -> int:
+        """Stock clean pattern, or one tight spiral uploaded once and kept."""
+        if not self.session_on:
+            raise HomeAssistantError("Drift power is off")
+        stock = self._stock_clean_id()
+        if stock is not None:
+            return stock
+        playing = self.data.pattern_id if self.data is not None else None
+        stored = set(self.patterns.pattern_ids)
+        existing = self.library.protected_clean_id()
+        if existing is not None and existing in stored and existing != playing:
+            return existing
+        pattern_id = choose_clean_upload_id(stored, playing, existing)
+        points = cleaning_spiral()
+        pages = paginate([wire_point(theta, rho) for theta, rho in points])
+        await self._transfer(pattern_id, pages)
+        text = spiral_thr(points)
+        self.library.remember(pattern_id, "Clean", text, protected=True)
+        await self._save_library()
+        self.preview_at = datetime.now(timezone.utc)
+        try:
+            png = await self.hass.async_add_executor_job(render_thr, text)
+            preview = self._preview_path(pattern_id)
+
+            def _write() -> None:
+                preview.parent.mkdir(parents=True, exist_ok=True)
+                preview.write_bytes(png)
+
+            await self.hass.async_add_executor_job(_write)
+        except Exception:
+            _LOGGER.warning("Drift clean preview was not saved", exc_info=True)
+        self._publish()
+        return pattern_id
+
+    async def async_clean_sand(self) -> None:
+        """Play the clean pattern. Power stays wherever the switch left it."""
+        if not self.session_on:
+            raise HomeAssistantError("Drift power is off")
+        async with self._command_lock:
+            if not self.session_on:
+                return
+            self._clean_follow += 1
+            pattern_id = await self._ensure_clean_id()
+            if not self.session_on:
+                return
+            await self.async_send(draw_pattern(pattern_id))
+            self._replace(pattern_id=pattern_id, status=1)
+
+    async def _play_after_clean(self, token: int, pattern_id: int, clean_id: int) -> None:
+        """After the wipe finishes, play the pattern the user picked.
+
+        This watches state the table already sends. It does not poll. Turning
+        power off, or picking another pattern, cancels it.
+        """
+        seen = False
+        deadline = asyncio.get_running_loop().time() + 20 * 60
+        while asyncio.get_running_loop().time() < deadline:
+            if token != self._clean_follow or not self.session_on:
+                return
+            data = self.data
+            if data is not None and data.pattern_id == clean_id and data.drawing:
+                seen = True
+            if seen and data is not None and not data.drawing:
+                break
+            await asyncio.sleep(0.5)
+        else:
+            return
+        async with self._command_lock:
+            if token != self._clean_follow or not self.session_on:
+                return
+            await self.async_send(draw_pattern(pattern_id))
+            self._replace(pattern_id=pattern_id, status=1)
+
+    async def async_set_clean_before(self, enabled: bool) -> None:
+        """Remember whether a new pattern should wipe the sand first."""
+        self.library.clean_before = bool(enabled)
+        await self._save_library()
+        self._publish()
+
     async def async_delete_pattern(self, *, pattern_id: int | None = None, name: str | None = None) -> None:
         """Delete one pattern this integration uploaded, never a stock id or the one drawing."""
         async with self._command_lock:
@@ -901,6 +1014,7 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
                 stored=set(self.patterns.pattern_ids),
                 playing=playing,
                 uploaded=self.library.uploaded_ids(),
+                protected=self.library.protected_ids(),
             )
             if reason is not None:
                 raise HomeAssistantError(reason)

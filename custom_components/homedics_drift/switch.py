@@ -20,7 +20,10 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Create the power switch."""
-    async_add_entities([DriftPowerSwitch(entry.runtime_data)])
+    coordinator = entry.runtime_data
+    async_add_entities(
+        [DriftPowerSwitch(coordinator), DriftCleanBeforeSwitch(coordinator)]
+    )
 
 
 class DriftPowerSwitch(DriftEntity, RestoreEntity, SwitchEntity):
@@ -83,3 +86,45 @@ class DriftPowerSwitch(DriftEntity, RestoreEntity, SwitchEntity):
     async def async_turn_off(self, **kwargs: object) -> None:
         """Pause if the ball is moving, and turn the lamp off."""
         await self.coordinator.async_set_power(False)
+
+
+class DriftCleanBeforeSwitch(DriftEntity, RestoreEntity, SwitchEntity):
+    """When on, choosing a pattern wipes the sand first. Play and pause do not."""
+
+    _attr_translation_key = "clean_before"
+    _attr_icon = "mdi:broom"
+
+    def __init__(self, coordinator: DriftCoordinator) -> None:
+        """Identify the switch."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}-clean-before"
+
+    @property
+    def is_on(self) -> bool:
+        """Local option. The table is not asked."""
+        return self.coordinator.library.clean_before
+
+    @property
+    def available(self) -> bool:
+        """Shown whenever the table is connected, including while Power is off."""
+        return super().available
+
+    @override
+    async def async_added_to_hass(self) -> None:
+        """Restore the last choice if the library has not already loaded one."""
+        await super().async_added_to_hass()
+        last = await self.async_get_last_state()
+        if last is None or self.coordinator.library.clean_before:
+            return
+        if last.state == STATE_ON:
+            await self.coordinator.async_set_clean_before(True)
+
+    @override
+    async def async_turn_on(self, **kwargs: object) -> None:
+        """Wipe before the next pattern that is chosen. Does not start a wipe now."""
+        await self.coordinator.async_set_clean_before(True)
+
+    @override
+    async def async_turn_off(self, **kwargs: object) -> None:
+        """Choose patterns without wiping first."""
+        await self.coordinator.async_set_clean_before(False)

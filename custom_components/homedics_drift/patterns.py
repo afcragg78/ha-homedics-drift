@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 USER_ID_MIN = 50000
+CLEAN_PATTERN_ID = 50000
 STORAGE_CAP = 700
 MAX_POINTS = 24_000
 PAGE_SIZE = 40
@@ -161,8 +162,17 @@ def slots(stored_count: int) -> tuple[int, int]:
     return used, max(0, STORAGE_CAP - used)
 
 
-def deletion_refusal(pattern_id: int, *, stored: set[int], playing: int | None, uploaded: set[int]) -> str | None:
+def deletion_refusal(
+    pattern_id: int,
+    *,
+    stored: set[int],
+    playing: int | None,
+    uploaded: set[int],
+    protected: set[int] | None = None,
+) -> str | None:
     """Why a delete must not be sent, or None when it is safe."""
+    if pattern_id in (protected or set()):
+        return "the clean pattern is kept"
     if pattern_id < USER_ID_MIN or pattern_id not in uploaded:
         return "only a pattern uploaded from Home Assistant can be deleted"
     if playing and pattern_id == playing:
@@ -170,6 +180,85 @@ def deletion_refusal(pattern_id: int, *, stored: set[int], playing: int | None, 
     if pattern_id not in stored:
         return "the table did not list that pattern, so it was not deleted"
     return None
+
+
+def cleaning_spiral(spacing: float = 0.05) -> list[tuple[float, float]]:
+    """Tight spiral from the centre to the rim.
+
+    Turn spacing is about 0.05 of the radius, a little under the ball width,
+    which is the full-table wipe Drifted uses. Points are already close
+    together, so this list is sent as-is.
+    """
+    turns = max(1, math.ceil(1.0 / spacing - 1e-12))
+    total = turns * 2.0 * math.pi
+    points: list[tuple[float, float]] = []
+    theta = 0.0
+    while theta < total:
+        rho = theta / total
+        points.append((theta, rho))
+        theta += min(0.4, 0.02 / max(rho, 0.02))
+    points.append((total, 1.0))
+    return points
+
+
+def spiral_thr(points: list[tuple[float, float]] | None = None) -> str:
+    """``.thr`` text for the cleaning spiral, kept with the library entry."""
+    chosen = cleaning_spiral() if points is None else points
+    return "".join(f"{theta:.6f} {rho:.6f}\n" for theta, rho in chosen)
+
+
+@dataclass(frozen=True, slots=True)
+class CleanList:
+    """A playlist the table sent, reduced to what clean-pattern lookup needs."""
+
+    index: int
+    name: str | None
+    pattern_ids: tuple[int, ...]
+
+
+def find_stock_clean(
+    playlists: list[CleanList], names: dict[int, str], stored: set[int]
+) -> int | None:
+    """A factory pattern named clean, preferring the list entry at position 1.
+
+    Names come from a playlist the table sent or from a local rename of a
+    stock id. Uploaded ids are not treated as the factory clean pattern.
+    """
+    for pattern_id, name in names.items():
+        if (
+            name.casefold() == "clean"
+            and pattern_id in stored
+            and pattern_id < USER_ID_MIN
+        ):
+            return pattern_id
+    matches = [
+        item
+        for item in playlists
+        if item.name and item.name.casefold() == "clean" and item.pattern_ids
+    ]
+    matches.sort(key=lambda item: (item.index != 1, item.index))
+    for item in matches:
+        pattern_id = item.pattern_ids[0]
+        if pattern_id > 0 and (not stored or pattern_id in stored) and pattern_id < USER_ID_MIN:
+            return pattern_id
+    return None
+
+
+def clean_play_order(target: int, clean_id: int | None, *, clean_before: bool) -> list[int]:
+    """Patterns to draw. Clean runs first only when that option is on."""
+    if clean_before and clean_id is not None and clean_id != target:
+        return [clean_id, target]
+    return [target]
+
+
+def choose_clean_upload_id(stored: set[int], playing: int | None, existing: int | None) -> int:
+    """Prefer id 50000. Never replace a drawing id or a different stored pattern."""
+    active = playing if playing and playing > 0 else None
+    if existing is not None and existing >= USER_ID_MIN and existing != active:
+        return existing
+    if CLEAN_PATTERN_ID not in stored and CLEAN_PATTERN_ID != active:
+        return CLEAN_PATTERN_ID
+    return allocate_id(stored, playing=playing, reuse=None)
 
 
 def path_under_config(config_dir: Path, raw: str) -> Path:
@@ -213,6 +302,7 @@ class PatternRecord:
     name: str
     thr: str
     source: str = ""
+    protected: bool = False
 
 
 @dataclass
@@ -221,6 +311,7 @@ class PatternLibrary:
 
     records: dict[int, PatternRecord] = field(default_factory=dict)
     aliases: dict[int, str] = field(default_factory=dict)
+    clean_before: bool = False
 
     def name_for(self, pattern_id: int) -> str | None:
         alias = self.aliases.get(pattern_id)
@@ -245,8 +336,25 @@ class PatternLibrary:
                 return record.pattern_id
         return None
 
-    def remember(self, pattern_id: int, name: str, thr: str, source: str = "") -> None:
-        self.records[pattern_id] = PatternRecord(pattern_id, name, thr, source)
+    def protected_ids(self) -> set[int]:
+        return {record.pattern_id for record in self.records.values() if record.protected}
+
+    def protected_clean_id(self) -> int | None:
+        for record in self.records.values():
+            if record.protected:
+                return record.pattern_id
+        return None
+
+    def remember(
+        self,
+        pattern_id: int,
+        name: str,
+        thr: str,
+        source: str = "",
+        *,
+        protected: bool = False,
+    ) -> None:
+        self.records[pattern_id] = PatternRecord(pattern_id, name, thr, source, protected)
         self.aliases[pattern_id] = name
 
     def rename(self, pattern_id: int, name: str) -> None:
@@ -273,10 +381,12 @@ class PatternLibrary:
                     "name": record.name,
                     "thr": record.thr,
                     "source": record.source,
+                    "protected": record.protected,
                 }
                 for record in self.records.values()
             ],
             "aliases": {str(pattern_id): name for pattern_id, name in self.aliases.items()},
+            "clean_before": self.clean_before,
         }
 
     @classmethod
@@ -294,10 +404,15 @@ class PatternLibrary:
                     name = str(item["name"])
                     thr = str(item.get("thr") or "")
                     source = str(item.get("source") or "")
+                    protected = bool(item.get("protected"))
                 except (KeyError, TypeError, ValueError):
                     continue
                 if pattern_id >= USER_ID_MIN and name:
-                    library.records[pattern_id] = PatternRecord(pattern_id, name, thr, source)
+                    library.records[pattern_id] = PatternRecord(
+                        pattern_id, name, thr, source, protected
+                    )
+        if data.get("clean_before") is True:
+            library.clean_before = True
         aliases = data.get("aliases")
         if isinstance(aliases, dict):
             for key, value in aliases.items():

@@ -70,6 +70,9 @@
     "switch": {
       "power": {
         "name": "Power"
+      },
+      "clean_before": {
+        "name": "Clean before pattern"
       }
     },
     "button": {
@@ -78,6 +81,9 @@
       },
       "upload_folder_pattern": {
         "name": "Upload folder pattern"
+      },
+      "clean_sand": {
+        "name": "Clean sand"
       }
     },
     "image": {

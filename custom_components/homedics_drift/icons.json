@@ -49,6 +49,9 @@
       },
       "upload_folder_pattern": {
         "default": "mdi:upload"
+      },
+      "clean_sand": {
+        "default": "mdi:broom"
       }
     },
     "image": {
@@ -59,6 +62,9 @@
     "switch": {
       "power": {
         "default": "mdi:power"
+      },
+      "clean_before": {
+        "default": "mdi:broom"
       }
     }
   }

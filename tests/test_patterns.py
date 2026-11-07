@@ -10,10 +10,15 @@ import pytest
 from custom_components.homedics_drift.patterns import (
     STORAGE_CAP,
     USER_ID_MIN,
+    CleanList,
     PatternLibrary,
     PatternRejected,
     allocate_id,
+    choose_clean_upload_id,
+    clean_play_order,
+    cleaning_spiral,
     deletion_refusal,
+    find_stock_clean,
     densify,
     inbox_names,
     label_patterns,
@@ -99,6 +104,42 @@ def test_pattern_path_must_stay_inside_config() -> None:
         path_under_config(root, "/etc/passwd")
     with pytest.raises(PatternRejected):
         path_under_config(root, "/config/drift_patterns/spiral.txt")
+
+
+def test_stock_clean_is_preferred_and_the_spiral_is_protected() -> None:
+    stored = {3, 9, 40}
+    lists = [
+        CleanList(1, "clean", (3, 9)),
+        CleanList(2, "Evening", (40,)),
+    ]
+    assert find_stock_clean(lists, {}, stored) == 3
+    assert find_stock_clean([], {3: "Clean"}, stored) == 3
+    assert find_stock_clean([], {50000: "Clean"}, stored | {50000}) is None
+    assert find_stock_clean([CleanList(4, "Other", (3,))], {}, stored) is None
+    spiral = cleaning_spiral()
+    assert spiral[0][1] == 0
+    assert spiral[-1] == (spiral[-1][0], 1.0)
+    assert spiral[-1][0] == pytest.approx(20 * 2 * math.pi)
+    assert len(spiral) < 8000
+    assert choose_clean_upload_id(set(), None, None) == 50000
+    assert choose_clean_upload_id({50000}, None, None) != 50000
+    assert choose_clean_upload_id({50000}, 12, 50010) == 50010
+    library = PatternLibrary()
+    library.remember(50000, "Clean", "0 0\n", protected=True)
+    assert deletion_refusal(
+        50000,
+        stored={50000},
+        playing=None,
+        uploaded={50000},
+        protected=library.protected_ids(),
+    ) == "the clean pattern is kept"
+    assert clean_play_order(40, 3, clean_before=True) == [3, 40]
+    assert clean_play_order(3, 3, clean_before=True) == [3]
+    assert clean_play_order(40, 3, clean_before=False) == [40]
+    restored = PatternLibrary.from_dict(library.to_dict())
+    assert restored.protected_clean_id() == 50000
+    restored.clean_before = True
+    assert PatternLibrary.from_dict(restored.to_dict()).clean_before is True
 
 
 def test_preview_is_a_png() -> None:
