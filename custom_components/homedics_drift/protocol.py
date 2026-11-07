@@ -1,9 +1,9 @@
 """Drift sand-table packet codec.
 
-Framing, commands, and table messages follow the public Drift protocol
-(https://github.com/joshlannin/drifted, MIT). This module is an independent
-Python implementation of that specification. It does not send firmware-update
-commands (0x15) or the reserved controller reset (0x14/12).
+Josh Lannin's Drifted project (https://github.com/joshlannin/drifted, MIT,
+copyright Altimix LLC) reverse-engineered this protocol. This Home Assistant
+integration was converted from Drifted using Grok Bot. It does not send
+firmware-update commands (0x15) or the reserved controller reset (0x14/12).
 
 Playlist packets (table command 0x30, actions 1..4) are the playlist list
 the table sends during the session dump on every connection. Host command

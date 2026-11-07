@@ -1,10 +1,18 @@
 # HoMedics Drift
 
+![Sand table icon](custom_components/homedics_drift/brand/icon.png)
+
 Home Assistant custom integration for the Bluetooth HoMedics Drift sand tables. It talks to the table through Home Assistant's Bluetooth integration, so a USB adapter or an ESPHome Bluetooth proxy both work. No table address is hardcoded.
 
 **This project is unofficial and is not affiliated with, endorsed by, or supported by HoMedics.** It drives a motorized sand table over an undocumented Bluetooth protocol. Use it at your own risk. A bad or interrupted session can leave a drawing unfinished; it should not damage the table, but that is not a promise.
 
-The protocol, handshake, and the traps below come from the open-source [Drifted](https://github.com/joshlannin/drifted) project by Josh Lannin (MIT). Drifted tested a generation-1 16" table and published the byte format, failure modes, and the vectors in `spec/vectors/protocol.json`. This integration is an independent Python client of that specification. The packet tests check those published vectors. Drifted's Swift sources were not copied.
+## Credit
+
+All credit for the protocol goes to Josh Lannin's [Drifted](https://github.com/joshlannin/drifted) project. Drifted reverse-engineered how these Bluetooth sand tables speak, tested a generation-1 16" table, and published the handshake, packet format, failure modes, and the vectors in `spec/vectors/protocol.json`. Drifted is MIT licensed, copyright Altimix LLC.
+
+This Home Assistant integration was converted from Drifted using Grok Bot.
+
+afcragg78 posted this repository. They are not the author of Drifted or of this conversion. `manifest.json` lists `@afcragg78` under `codeowners` only because Home Assistant requires a GitHub handle there. That entry is the person who posted the repository, not an authorship credit.
 
 ## Supported models
 
@@ -19,6 +27,21 @@ Tables do not pair. Only one Bluetooth central can be connected. While Home Assi
 The advertised name sometimes has a trailing carriage return or line feed. The integration trims that before matching. Discovery uses Home Assistant's Bluetooth matcher `local_name: KS*`.
 
 Requires Home Assistant 2026.11 or newer.
+
+## Icon
+
+The artwork is original. It is a circular sand table, a spiral in the sand, and a small ball, in warm sand tones, on a transparent background. It is not a HoMedics logo and it does not use Home Assistant's logo.
+
+Since Home Assistant 2026.3, a custom integration ships its own images in `custom_components/<domain>/brand/`. This repository includes:
+
+| File | Size |
+| --- | --- |
+| `custom_components/homedics_drift/brand/icon.png` | 256×256 |
+| `custom_components/homedics_drift/brand/icon@2x.png` | 512×512 |
+| `custom_components/homedics_drift/brand/logo.png` | 543×256 |
+| `custom_components/homedics_drift/brand/logo@2x.png` | 1085×512 |
+
+After the integration is installed, Home Assistant shows that icon on the Integrations page automatically. Local images take priority over the brands CDN. Nothing has to be added to the [home-assistant/brands](https://github.com/home-assistant/brands) repository, so this repo does not include a `brands-submission/` folder. The Marketplace can also pick the images up from a GitHub release once the repository is in the catalog.
 
 ## Install
 
@@ -92,6 +115,4 @@ Tests live in `tests/` and do not need Home Assistant or a table. `tests/fixture
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
-
-Protocol documentation and test vectors: [Drifted](https://github.com/joshlannin/drifted), MIT, copyright Altimix LLC.
+MIT, matching Drifted's license. See [LICENSE](LICENSE). The copyright notice is Altimix LLC, the copyright holder of Drifted. This integration was converted from that project using Grok Bot. The person who posted this repository is not the author.

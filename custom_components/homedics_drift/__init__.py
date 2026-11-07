@@ -1,4 +1,10 @@
-"""The HoMedics Drift integration."""
+"""Home Assistant integration for HoMedics Drift sand tables.
+
+Converted from Josh Lannin's Drifted project
+(https://github.com/joshlannin/drifted) using Grok Bot. Drifted
+reverse-engineered the Bluetooth protocol. The GitHub account that posted
+this repository is not the author.
+"""
 
 from __future__ import annotations
 
