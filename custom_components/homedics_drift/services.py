@@ -58,9 +58,9 @@ _GENERATE_SCHEMA = vol.Schema(
         vol.Optional("points"): vol.Coerce(float),
         vol.Optional("waves"): vol.Coerce(float),
         vol.Optional("loops"): vol.Coerce(float),
-        vol.Optional("R"): vol.Coerce(float),
-        vol.Optional("r"): vol.Coerce(float),
-        vol.Optional("d"): vol.Coerce(float),
+        vol.Optional("outer"): vol.Coerce(float),
+        vol.Optional("inner"): vol.Coerce(float),
+        vol.Optional("pen"): vol.Coerce(float),
     },
     extra=vol.ALLOW_EXTRA,
 )
@@ -102,7 +102,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         coordinator = await _coordinator(hass, call)
         params = {
             key: call.data[key]
-            for key in ("turns", "outward", "petals", "points", "waves", "loops", "R", "r", "d")
+            for key in ("turns", "outward", "petals", "points", "waves", "loops", "outer", "inner", "pen")
             if key in call.data
         }
         await coordinator.async_generate_pattern(

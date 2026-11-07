@@ -418,11 +418,11 @@ def generate_points(kind: str, params: dict[str, object] | None = None) -> list[
             points.append((x, y))
         return points
     if name == "spirograph":
-        outer = _number(options, "R", 5, 1, 20)
-        inner = _number(options, "r", 3, 0.2, 19)
+        outer = _number(options, "outer", 5, 1, 20)
+        inner = _number(options, "inner", 3, 0.2, 19)
         if inner >= outer:
-            raise PatternRejected("r must be smaller than R")
-        offset = _number(options, "d", 2, 0.1, 20)
+            raise PatternRejected("inner must be smaller than outer")
+        offset = _number(options, "pen", 2, 0.1, 20)
         loops = _number(options, "loops", 3, 1, 12)
         steps = int(loops * 500)
         raw = []

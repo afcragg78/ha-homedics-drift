@@ -236,17 +236,17 @@
           "name": "Loops",
           "description": "Spirograph loops, from 1 to 12."
         },
-        "R": {
+        "outer": {
           "name": "Outer radius",
-          "description": "Spirograph fixed radius R."
+          "description": "Spirograph fixed radius."
         },
-        "r": {
+        "inner": {
           "name": "Inner radius",
-          "description": "Spirograph rolling radius r. Must be smaller than R."
+          "description": "Spirograph rolling radius. Must be smaller than the outer radius."
         },
-        "d": {
+        "pen": {
           "name": "Pen offset",
-          "description": "Spirograph pen distance d."
+          "description": "Spirograph pen distance."
         }
       }
     }

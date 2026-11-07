@@ -142,7 +142,7 @@ data:
   play: true
 ```
 
-`type` is `spiral`, `rose`, `star`, `wave`, or `spirograph`. Spiral takes `turns` (1–40). Star takes `points` (3–12). Wave takes `waves`. Spirograph takes `R`, `r`, `d`, and `loops`. `play: true` starts it only while Power is on. If Power is off the pattern is still saved, and it is not played.
+`type` is `spiral`, `rose`, `star`, `wave`, or `spirograph`. Spiral takes `turns` (1–40). Star takes `points` (3–12). Wave takes `waves`. Spirograph takes `outer`, `inner`, `pen`, and `loops`. `play: true` starts it only while Power is on. If Power is off the pattern is still saved, and it is not played.
 
 **A prompt** uses the assistant you already set up in Home Assistant. This integration does not store an API key. Open the integration options and pick an AI Task entity. If you leave that empty, the default AI Task is used when one is installed. If there is no AI Task, a conversation agent is used instead, and you can pick which agent in the same options. Each drawing is a single request. If you have neither, **Draw with AI** stays unavailable.
 

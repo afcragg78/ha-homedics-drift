@@ -58,7 +58,7 @@ def test_builtin_curves_need_no_model_and_stay_valid() -> None:
         ("rose", {"petals": 5}),
         ("star", {"points": 5}),
         ("wave", {"waves": 4}),
-        ("spirograph", {"R": 5, "r": 3, "d": 2, "loops": 2}),
+        ("spirograph", {"outer": 5, "inner": 3, "pen": 2, "loops": 2}),
     ):
         text = generated_thr(kind, params)
         start, end = _ends(text)
@@ -68,8 +68,8 @@ def test_builtin_curves_need_no_model_and_stay_valid() -> None:
     assert len(generate_points("star", {"points": 5})) >= 6
     with pytest.raises(PatternRejected, match="type must be"):
         generate_points("logo")
-    with pytest.raises(PatternRejected, match="r must be smaller"):
-        generate_points("spirograph", {"R": 3, "r": 4, "d": 1, "loops": 1})
+    with pytest.raises(PatternRejected, match="inner must be smaller"):
+        generate_points("spirograph", {"outer": 3, "inner": 4, "pen": 1, "loops": 1})
 
 
 def test_a_large_jump_is_filled_and_the_clean_id_stays_protected() -> None:

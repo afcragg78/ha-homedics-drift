@@ -132,19 +132,19 @@ generate_pattern:
           min: 1
           max: 12
           mode: box
-    R:
+    outer:
       selector:
         number:
           min: 1
           max: 20
           mode: box
-    r:
+    inner:
       selector:
         number:
           min: 0.2
           max: 19
           mode: box
-    d:
+    pen:
       selector:
         number:
           min: 0.1
