@@ -17,8 +17,11 @@ async def async_setup_entry(
     entry: DriftConfigEntry,
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
-    """Create the playlist select."""
-    async_add_entities([DriftPlaylistSelect(entry.runtime_data)])
+    """Create the playlist and pattern selects."""
+    coordinator = entry.runtime_data
+    async_add_entities(
+        [DriftPlaylistSelect(coordinator), DriftPatternSelect(coordinator)]
+    )
 
 
 class DriftPlaylistSelect(DriftEntity, SelectEntity):
@@ -52,3 +55,39 @@ class DriftPlaylistSelect(DriftEntity, SelectEntity):
     async def async_select_option(self, option: str) -> None:
         """Switch the table to this playlist."""
         await self.coordinator.async_select_playlist(option)
+
+
+class DriftPatternSelect(DriftEntity, SelectEntity):
+    """Every pattern id the table listed, shown as ``Pattern N``.
+
+    Choosing one sends draw-pattern (``0x14/1``). The list is the handshake
+    dump (``0x33``), refreshed when the table sends it again. Soft sleep
+    blocks the command so picking a pattern does not wake the table.
+    """
+
+    _attr_translation_key = "pattern"
+    _attr_icon = "mdi:palette-outline"
+
+    def __init__(self, coordinator: DriftCoordinator) -> None:
+        """Identify the select."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}-pattern-select"
+
+    @property
+    def options(self) -> list[str]:
+        """Stored pattern labels, in id order."""
+        return [label for label, _pattern_id in self.coordinator.patterns.options()]
+
+    @property
+    def current_option(self) -> str | None:
+        """The pattern in the latest running state, when the table has stored it."""
+        current = self._state.pattern_id
+        for label, pattern_id in self.coordinator.patterns.options():
+            if pattern_id == current:
+                return label
+        return None
+
+    @override
+    async def async_select_option(self, option: str) -> None:
+        """Play this stored pattern."""
+        await self.coordinator.async_select_pattern(option)

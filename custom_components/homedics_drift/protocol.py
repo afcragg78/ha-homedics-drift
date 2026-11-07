@@ -310,8 +310,13 @@ def current_time(moment: datetime | None = None) -> Packet:
 
 
 def power(on: bool) -> Packet:
+    """Absolute soft power, command ``0x14/16``.
+
+    ``1`` is on and ``0`` is off. This is not a toggle: the byte is the state
+    to set, and sending the same value again does not flip the table.
+    """
     writer = _packet(CMD_ACTION, 16)
-    writer.boolean(on)
+    writer.boolean(bool(on))
     return _finish(CMD_ACTION, writer)
 
 
@@ -515,25 +520,66 @@ def playback_allowed(power_on: bool | None) -> bool:
     return power_on is not False
 
 
+def shown_playback(power_on: bool | None, drawing: bool) -> str:
+    """Player state that stays consistent with the power switch.
+
+    Soft power off is off even if a status byte still says drawing. Unknown
+    power follows the drawing byte, so a missing flag does not force off.
+    """
+    if power_on is False:
+        return "off"
+    if drawing:
+        return "playing"
+    return "paused"
+
+
 @dataclass(frozen=True, slots=True)
 class PowerHold:
-    """Soft-power command waiting for the table to echo ``powerOn``."""
+    """Absolute on/off waiting to be confirmed by ``powerOn``.
+
+    ``sent`` is false while the write is still queued. Status from that window
+    must not undo the switch. Once the byte is on the wire, the next report
+    confirms a match or replaces the switch when the table disagrees.
+    """
 
     on: bool
+    sent: bool = False
 
 
 def reconcile_power(
     reported: bool | None, hold: PowerHold | None
 ) -> tuple[bool | None, PowerHold | None]:
-    """Keep ``0x14/16`` until the running-state flag agrees with it.
+    """Follow the table's ``powerOn`` flag after the command has been sent.
 
-    A stale ``powerOn`` true after sleep must not flip the switch back on.
+    A report that matches clears the wait. A report that disagrees becomes
+    the switch state, so a missed command cannot leave Home Assistant inverted.
     """
-    if hold is None:
-        return reported, None
-    if reported is hold.on:
-        return reported, None
-    return hold.on, hold
+    if hold is not None and not hold.sent:
+        return hold.on, hold
+    if reported is None:
+        if hold is None:
+            return None, None
+        return hold.on, hold
+    return reported, None
+
+
+@dataclass(slots=True)
+class PowerQueue:
+    """Collapse rapid on/off requests to the latest absolute value.
+
+    Each ``push`` replaces whatever was waiting. ``pop`` returns that one
+    value, so a burst of flips becomes a single ``0x14/16`` write.
+    """
+
+    pending: bool | None = None
+
+    def push(self, on: bool) -> None:
+        self.pending = bool(on)
+
+    def pop(self) -> bool | None:
+        value = self.pending
+        self.pending = None
+        return value
 
 
 def draw_pattern(pattern_id: int) -> Packet:
@@ -839,6 +885,8 @@ class Kind(StrEnum):
     NO_STORAGE = "no_storage"
     ALARM = "alarm"
     PATTERNS = "patterns"
+    PATTERNS_START = "patterns_start"
+    PATTERNS_END = "patterns_end"
     OTHER = "other"
 
 
@@ -905,6 +953,10 @@ def decode(packet: Packet, *, next_playlist_index: int = 1) -> Message:
         except ProtocolError:
             return Message(Kind.OTHER, packet)
         return Message(Kind.ALARM, packet, alarm_kind=action, alarm_codes=codes)
+    if command == CMD_PATTERNS and action == 1:
+        return Message(Kind.PATTERNS_START, packet)
+    if command == CMD_PATTERNS and action == 2:
+        return Message(Kind.PATTERNS_END, packet)
     if command == CMD_PATTERNS and action == 3:
         reader = _Reader(packet.arguments)
         try:
@@ -1027,6 +1079,15 @@ class PlaylistCatalogue:
                 return playlist
         return None
 
+    def playlist_for(self, protocol_id: str) -> Playlist | None:
+        """The playlist whose wire id matches the running state."""
+        if not protocol_id:
+            return None
+        for playlist in self.playlists:
+            if playlist.protocol_id == protocol_id:
+                return playlist
+        return None
+
     def ingest(self, packet: Packet) -> Message:
         """Decode ``packet``, refreshing playlists when the table sends them.
 
@@ -1040,6 +1101,95 @@ class PlaylistCatalogue:
         else:
             self.apply(message)
         return message
+
+
+def pattern_label(pattern_id: int) -> str:
+    """Label for a stored pattern.
+
+    The table's pattern list (``0x33``) is ids only. Drifted keeps human names
+    on the computer that uploaded a drawing, not on the table, so a pattern
+    the table knows is shown as ``Pattern N``.
+    """
+    return f"Pattern {int(pattern_id)}"
+
+
+def playlist_pattern_index(pattern_ids: tuple[int, ...] | list[int], pattern_id: int) -> int | None:
+    """1-based position of ``pattern_id`` in a playlist, when that playlist lists it."""
+    try:
+        return tuple(pattern_ids).index(pattern_id) + 1
+    except ValueError:
+        return None
+
+
+@dataclass(slots=True)
+class PatternCatalogue:
+    """Pattern ids the table listed with ``0x33``.
+
+    The handshake dumps them, and the table sends the list again after an
+    upload or delete. Nothing is requested on a timer. A start (``0x33/1``)
+    begins a fresh dump; pages (``0x33/3``) add ids; an end with no pages
+    means the table stored nothing. Id 0 is the idle placeholder and is not
+    offered as a pattern to play.
+    """
+
+    pattern_ids: tuple[int, ...] = ()
+    _reset_pending: bool = False
+
+    def clear(self) -> None:
+        self.pattern_ids = ()
+        self._reset_pending = False
+
+    def note(self, message: Message) -> bool:
+        """Merge one decoded message. Return True when the stored ids changed."""
+        if message.kind is Kind.WAITING:
+            changed = bool(self.pattern_ids)
+            self.clear()
+            return changed
+        if message.kind is Kind.PATTERNS_START:
+            self._reset_pending = True
+            return False
+        if message.kind is Kind.PATTERNS_END:
+            if not self._reset_pending:
+                return False
+            changed = bool(self.pattern_ids)
+            self.pattern_ids = ()
+            self._reset_pending = False
+            return changed
+        if message.kind is not Kind.PATTERNS:
+            return False
+        incoming = message.pattern_ids or []
+        if self._reset_pending:
+            merged = tuple(incoming)
+            self._reset_pending = False
+        else:
+            merged = (*self.pattern_ids, *incoming)
+        ordered = tuple(sorted({pattern_id for pattern_id in merged if pattern_id}))
+        if ordered == self.pattern_ids:
+            return False
+        self.pattern_ids = ordered
+        return True
+
+    def options(self) -> list[tuple[str, int]]:
+        """Labels in id order. The table does not send a separate name."""
+        return [(pattern_label(pattern_id), pattern_id) for pattern_id in self.pattern_ids]
+
+    def names(self) -> list[str]:
+        return [label for label, _pattern_id in self.options()]
+
+    def by_label(self, label: str) -> int | None:
+        for option, pattern_id in self.options():
+            if option == label:
+                return pattern_id
+        return None
+
+    def label_for(self, pattern_id: int) -> str | None:
+        """``Pattern N`` when the table has reported that id. Idle (0) is unnamed."""
+        if pattern_id <= 0:
+            return None
+        for option, stored in self.options():
+            if stored == pattern_id:
+                return option
+        return pattern_label(pattern_id)
 
 
 def normalize_advertised_name(name: str | None) -> str:

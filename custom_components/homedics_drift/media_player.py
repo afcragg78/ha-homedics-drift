@@ -14,7 +14,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .coordinator import DriftConfigEntry, DriftCoordinator
 from .entity import DriftEntity
-from .protocol import playback_allowed
+from .protocol import playback_allowed, shown_playback
 
 
 async def async_setup_entry(
@@ -66,27 +66,28 @@ class DriftPlayer(DriftEntity, MediaPlayerEntity):
         data = self.coordinator.data
         if data is None:
             return None
-        if data.power_on is False:
+        activity = shown_playback(data.power_on, data.drawing)
+        if activity == "off":
             return MediaPlayerState.OFF
-        if data.playback == "playing":
+        if activity == "playing":
             return MediaPlayerState.PLAYING
         return MediaPlayerState.PAUSED
 
     @property
     def media_title(self) -> str | None:
-        """Current pattern id, once a status packet has arrived."""
+        """Current pattern as ``Pattern N``, once a status packet has arrived."""
         data = self.coordinator.data
         if data is None:
             return None
-        return f"Pattern {data.pattern_id}"
+        return self.coordinator.patterns.label_for(data.pattern_id)
 
     @property
     def media_playlist(self) -> str | None:
-        """Playlist id from the running-state broadcast, when one is active."""
+        """Playlist name from the catalogue, when the running state names one."""
         data = self.coordinator.data
-        if data is None:
+        if data is None or not data.playlist_id:
             return None
-        return data.playlist_id or None
+        return self.coordinator.catalogue.label_for(data.playlist_id)
 
     def _asleep(self) -> bool:
         data = self.coordinator.data

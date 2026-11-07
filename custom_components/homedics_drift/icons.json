@@ -18,6 +18,9 @@
     "select": {
       "playlist": {
         "default": "mdi:playlist-play"
+      },
+      "pattern": {
+        "default": "mdi:palette-outline"
       }
     },
     "sensor": {
@@ -29,6 +32,9 @@
       },
       "pattern": {
         "default": "mdi:palette-outline"
+      },
+      "now_playing": {
+        "default": "mdi:draw"
       }
     },
     "switch": {

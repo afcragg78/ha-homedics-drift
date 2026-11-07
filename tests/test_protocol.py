@@ -18,12 +18,14 @@ from custom_components.homedics_drift.protocol import (
     CMD_FIRMWARE,
     Packet,
     PacketParser,
+    PatternCatalogue,
     PlaylistCatalogue,
     alarm_text,
     brightness,
     confirm_connection,
     confirm_data,
     current_time,
+    decode,
     delete_patterns,
     draw_pattern,
     draw_playlist,
@@ -38,13 +40,18 @@ from custom_components.homedics_drift.protocol import (
     parse_light_mode_echo,
     reconcile_lamp,
     reconcile_power,
+    PowerQueue,
     playback_allowed,
+    shown_playback,
     normalize_advertised_name,
     resolved_lamp_level,
+    pattern_label,
     pattern_page,
+    playlist_pattern_index,
     percent_to_speed_raw,
     next_pattern,
     play_pause,
+    power,
     previous_pattern,
     random_mode,
     reply_for,
@@ -473,11 +480,54 @@ def _nul(text: str) -> bytes:
     return text.encode("ascii") + b"\x00"
 
 
-def test_soft_power_off_blocks_playback_until_the_table_echoes_it() -> None:
-    asleep = PowerHold(on=False)
-    assert reconcile_power(True, asleep) == (False, asleep)
-    assert reconcile_power(False, asleep) == (False, None)
-    assert reconcile_power(None, asleep) == (False, asleep)
+def test_power_command_is_absolute_on_or_off() -> None:
+    off = power(False)
+    on = power(True)
+    assert off.data == bytes((16, 0))
+    assert on.data == bytes((16, 1))
+    assert off.command == 0x14
+    assert on.command == 0x14
+    # Play/pause is a different action. Power never sends that toggle.
+    assert play_pause().data == bytes((3,))
+    assert off.data != play_pause().data
+    assert on.data != play_pause().data
+
+
+def test_power_switch_follows_the_table_and_a_disagreement_corrects_it() -> None:
+    assert reconcile_power(True, None) == (True, None)
+    assert reconcile_power(False, None) == (False, None)
+    # Still queued: a status that has not seen the command does not undo it.
+    queued = PowerHold(on=False, sent=False)
+    assert reconcile_power(True, queued) == (False, queued)
+    sent_off = PowerHold(on=False, sent=True)
+    assert reconcile_power(False, sent_off) == (False, None)
+    # The table stayed on. The switch must show on, not stick at the command.
+    assert reconcile_power(True, sent_off) == (True, None)
+    sent_on = PowerHold(on=True, sent=True)
+    assert reconcile_power(True, sent_on) == (True, None)
+    assert reconcile_power(False, sent_on) == (False, None)
+    assert reconcile_power(None, sent_off) == (False, sent_off)
+    assert reconcile_power(None, None) == (None, None)
+
+
+def test_rapid_power_flips_collapse_to_the_last_absolute_value() -> None:
+    queue = PowerQueue()
+    queue.push(False)
+    queue.push(True)
+    queue.push(False)
+    assert queue.pop() is False
+    assert queue.pop() is None
+    queue.push(True)
+    queue.push(True)
+    assert queue.pop() is True
+
+
+def test_player_follows_soft_power() -> None:
+    assert shown_playback(False, True) == "off"
+    assert shown_playback(False, False) == "off"
+    assert shown_playback(True, True) == "playing"
+    assert shown_playback(True, False) == "paused"
+    assert shown_playback(None, True) == "playing"
     assert playback_allowed(False) is False
     assert playback_allowed(True) is True
     assert playback_allowed(None) is True
@@ -562,6 +612,49 @@ def test_playlist_timestamp_id_keeps_a_separate_name() -> None:
     assert playlist.pattern_ids == (7,)
     assert catalogue.label_for(stamp) == "Evening"
     assert stamp not in {label for label, _item in catalogue.options()}
+
+
+def _pattern_packet(action: int, payload: bytes = b"") -> Packet:
+    return Packet(0x33, bytes((action,)) + payload)
+
+
+def test_stored_patterns_are_ids_labeled_pattern_n() -> None:
+    catalogue = PatternCatalogue()
+    assert catalogue.note(decode(_pattern_packet(1))) is False
+    page = bytes((0x00, 0x03, 0x02, 0x00, 0x01, 0x00, 0x0A, 0x00))
+    assert catalogue.note(decode(_pattern_packet(3, page))) is True
+    assert catalogue.note(decode(_pattern_packet(3, bytes((0x01, 0x01, 0x00, 0x00))))) is False
+    assert catalogue.pattern_ids == (1, 2, 10)
+    assert catalogue.names() == ["Pattern 1", "Pattern 2", "Pattern 10"]
+    assert catalogue.by_label("Pattern 2") == 2
+    assert catalogue.label_for(2) == "Pattern 2"
+    assert catalogue.label_for(0) is None
+    assert pattern_label(834) == "Pattern 834"
+    assert catalogue.note(decode(_pattern_packet(2))) is False
+
+
+def test_pattern_dump_replaces_the_previous_list() -> None:
+    catalogue = PatternCatalogue()
+    catalogue.note(decode(_pattern_packet(3, bytes((0x00, 0x01, 0x05, 0x00)))))
+    catalogue.note(decode(_pattern_packet(1)))
+    catalogue.note(decode(_pattern_packet(3, bytes((0x00, 0x01, 0x09, 0x00)))))
+    assert catalogue.names() == ["Pattern 9"]
+    catalogue.note(decode(_pattern_packet(1)))
+    assert catalogue.note(decode(_pattern_packet(2))) is True
+    assert catalogue.names() == []
+
+
+def test_new_handshake_clears_stored_patterns() -> None:
+    catalogue = PatternCatalogue()
+    catalogue.note(decode(_pattern_packet(3, bytes((0x00, 0x01, 0x04, 0x00)))))
+    waiting = decode(Packet(0x50, bytes((1,))))
+    assert catalogue.note(waiting) is True
+    assert catalogue.names() == []
+
+
+def test_playlist_pattern_index_is_one_based() -> None:
+    assert playlist_pattern_index((4, 9, 12), 9) == 2
+    assert playlist_pattern_index((4, 9), 3) is None
 
 
 def test_upload_stored_is_the_only_success_signal() -> None:

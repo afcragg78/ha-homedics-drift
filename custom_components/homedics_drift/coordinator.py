@@ -26,6 +26,7 @@ from .const import (
     BACKOFF_START,
     DOMAIN,
     NOTIFY_UUID,
+    POWER_DEBOUNCE,
     READY_TIMEOUT,
     WRITE_UUID,
 )
@@ -36,9 +37,11 @@ from .protocol import (
     LampHold,
     Message,
     PowerHold,
+    PatternCatalogue,
     PlaylistCatalogue,
     alarm_text,
     brightness,
+    draw_pattern,
     draw_playlist,
     fixed_color,
     lamp_on_packets,
@@ -51,7 +54,9 @@ from .protocol import (
     speed_raw,
     Packet,
     PacketParser,
+    PowerQueue,
     percent_to_speed_raw,
+    playback_allowed,
     reconcile_power,
 )
 
@@ -84,11 +89,14 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         self.data = None  # type: ignore[assignment]
         self.address = entry.data["address"]
         self.catalogue = PlaylistCatalogue()
+        self.patterns = PatternCatalogue()
         self.lamp_brightness = 100
         self.lamp_color: tuple[int, int, int] = (255, 255, 255)
         self.lamp_color_name = "Temp"
         self._lamp_hold: LampHold | None = None
         self._power_hold: PowerHold | None = None
+        self._power_queue = PowerQueue()
+        self._power_worker: asyncio.Task[None] | None = None
         self._client: BleakClientWithServiceCache | None = None
         self._device: BLEDevice | None = None
         self._parser = PacketParser()
@@ -118,10 +126,13 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         self._ready.set()
         task = self._task
         self._task = None
-        if task is not None and task is not asyncio.current_task() and not task.done():
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+        power_worker = self._power_worker
+        self._power_worker = None
+        for job in (task, power_worker):
+            if job is not None and job is not asyncio.current_task() and not job.done():
+                job.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await job
         await self._disconnect_client()
         await super().async_shutdown()
 
@@ -227,6 +238,7 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         if reply is not None:
             self._enqueue(reply, None)
         message = self.catalogue.ingest(packet)
+        patterns_changed = self.patterns.note(message)
         if message.kind is Kind.WAITING:
             self._ready.clear()
             self._publish()
@@ -234,9 +246,10 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         if message.kind is Kind.INIT_COMPLETE:
             if not self._ready.is_set():
                 _LOGGER.info(
-                    "Drift %s session ready (%s playlist(s))",
+                    "Drift %s session ready (%s playlist(s), %s pattern(s))",
                     self.address,
                     len(self.catalogue.playlists),
+                    len(self.patterns.pattern_ids),
                 )
             self._ready.set()
             self._publish()
@@ -249,7 +262,7 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         if message.kind is Kind.LIGHT_MODE and message.light_brightness is not None:
             self._apply_light_mode(message)
             return
-        if message.kind in (Kind.PLAYLIST, Kind.PLAYLIST_RESET):
+        if message.kind in (Kind.PLAYLIST, Kind.PLAYLIST_RESET) or patterns_changed:
             self._publish()
             return
         if message.kind is Kind.ALARM and message.alarm_codes is not None:
@@ -360,14 +373,43 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         self.async_set_updated_data(state)
 
     async def async_set_power(self, on: bool) -> None:
-        """Soft sleep or wake, command ``0x14/16``. This is not a mains plug.
+        """Soft sleep or wake with an absolute ``0x14/16`` value.
 
-        Off is held until the table reports ``powerOn`` false, so a stale
-        status packet cannot show the switch on while the table is asleep.
+        ``True`` sends 1 and ``False`` sends 0. Rapid flips are collapsed to
+        the last value and written one at a time. The switch shows that value
+        until the table reports ``powerOn``; a different report wins.
         """
-        await self.async_send(power(on))
-        self._power_hold = PowerHold(on)
-        self._replace(power_on=on)
+        requested = bool(on)
+        self._power_queue.push(requested)
+        self._power_hold = PowerHold(requested)
+        self._replace(power_on=requested)
+        worker = self._power_worker
+        if worker is None or worker.done():
+            self._power_worker = self.hass.async_create_task(
+                self._drain_power(),
+                name=f"{DOMAIN}-power-{self.address}",
+            )
+
+    async def _drain_power(self) -> None:
+        """Write the latest absolute power value, then any value that arrived later."""
+        while not self._shut_down:
+            try:
+                await asyncio.sleep(POWER_DEBOUNCE)
+                target = self._power_queue.pop()
+                if target is None:
+                    return
+                await self.async_send(power(target))
+                # A newer request replaces the hold before this write returns.
+                if self._power_hold is not None and self._power_hold.on is target:
+                    self._power_hold = PowerHold(target, sent=True)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                _LOGGER.debug("Drift power command was not written", exc_info=True)
+                if self._power_queue.pending is None:
+                    self._power_hold = None
+                    self._publish()
+                    return
 
     async def async_toggle_playback(self) -> None:
         """Send the protocol's play/pause toggle."""
@@ -455,8 +497,14 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
             shift_time=0,
         )
 
+    def _require_awake(self) -> None:
+        """Refuse playback while soft power is off so sleep stays off."""
+        if self.data is not None and not playback_allowed(self.data.power_on):
+            raise HomeAssistantError("Drift table is asleep")
+
     async def async_select_playlist(self, label: str) -> None:
         """Draw the playlist the table reported under ``label``."""
+        self._require_awake()
         playlist = self.catalogue.by_label(label)
         if playlist is None:
             raise HomeAssistantError(f"Unknown Drift playlist: {label}")
@@ -473,6 +521,15 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         if pattern_id:
             changes["pattern_id"] = pattern_id
         self._replace(**changes)
+
+    async def async_select_pattern(self, label: str) -> None:
+        """Play one stored pattern by the label ``Pattern N`` (command ``0x14/1``)."""
+        self._require_awake()
+        pattern_id = self.patterns.by_label(label)
+        if pattern_id is None:
+            raise HomeAssistantError(f"Unknown Drift pattern: {label}")
+        await self.async_send(draw_pattern(pattern_id))
+        self._replace(pattern_id=pattern_id, status=1)
 
     async def _async_update_data(self) -> DriftState:
         if self.data is None:

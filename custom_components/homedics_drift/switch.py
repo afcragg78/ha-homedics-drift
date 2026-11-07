@@ -33,9 +33,13 @@ class DriftPowerSwitch(DriftEntity, SwitchEntity):
         self._attr_unique_id = f"{coordinator.address}-power"
 
     @property
-    def is_on(self) -> bool:
-        """Reported power flag from the running-state broadcast."""
-        return bool(self._state.power_on)
+    def is_on(self) -> bool | None:
+        """The table's power flag, or the command still waiting for that flag.
+
+        ``None`` stays unknown. It is not treated as off, so a missing byte
+        cannot invert the next press.
+        """
+        return self._state.power_on
 
     @override
     async def async_turn_on(self, **kwargs: object) -> None:

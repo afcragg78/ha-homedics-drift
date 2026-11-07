@@ -16,3 +16,5 @@ MODEL: Final = "Drift ST-300/ST-400"
 READY_TIMEOUT: Final = 30.0
 BACKOFF_START: Final = 2.0
 BACKOFF_MAX: Final = 60.0
+# Rapid power taps become one absolute write of the last requested value.
+POWER_DEBOUNCE: Final = 0.2
