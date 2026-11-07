@@ -18,3 +18,6 @@ BACKOFF_START: Final = 2.0
 BACKOFF_MAX: Final = 60.0
 # Rapid power taps become one absolute write of the last requested value.
 POWER_DEBOUNCE: Final = 0.2
+
+CONF_AI_TASK_ENTITY: Final = "ai_task_entity"
+CONF_CONVERSATION_AGENT: Final = "conversation_agent"

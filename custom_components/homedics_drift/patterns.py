@@ -251,6 +251,13 @@ def clean_play_order(target: int, clean_id: int | None, *, clean_before: bool) -
     return [target]
 
 
+def reusable_id(reuse: int | None, protected: set[int]) -> int | None:
+    """Do not let a new drawing replace the protected clean pattern."""
+    if reuse is None or reuse in protected:
+        return None
+    return reuse
+
+
 def choose_clean_upload_id(stored: set[int], playing: int | None, existing: int | None) -> int:
     """Prefer id 50000. Never replace a drawing id or a different stored pattern."""
     active = playing if playing and playing > 0 else None

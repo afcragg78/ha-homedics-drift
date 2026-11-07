@@ -41,6 +41,9 @@
       },
       "slots": {
         "default": "mdi:database"
+      },
+      "ai_job": {
+        "default": "mdi:robot"
       }
     },
     "button": {
@@ -52,6 +55,14 @@
       },
       "clean_sand": {
         "default": "mdi:broom"
+      },
+      "draw_with_ai": {
+        "default": "mdi:draw"
+      }
+    },
+    "text": {
+      "ai_prompt": {
+        "default": "mdi:form-textbox"
       }
     },
     "image": {

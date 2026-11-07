@@ -24,6 +24,7 @@ async def async_setup_entry(
             DriftRefreshButton(coordinator),
             DriftUploadButton(coordinator),
             DriftCleanButton(coordinator),
+            DriftAiDrawButton(coordinator),
         ]
     )
 
@@ -87,3 +88,28 @@ class DriftCleanButton(DriftEntity, ButtonEntity):
         if not self.coordinator.session_on:
             return
         await self.coordinator.async_clean_sand()
+
+
+class DriftAiDrawButton(DriftEntity, ButtonEntity):
+    """Draw the text in AI prompt. Unavailable when no assistant is set up."""
+
+    _attr_translation_key = "draw_with_ai"
+    _attr_icon = "mdi:draw"
+
+    def __init__(self, coordinator: DriftCoordinator) -> None:
+        """Identify the button."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}-draw-with-ai"
+
+    @property
+    def available(self) -> bool:
+        """Off when Home Assistant has no AI Task and no conversation agent."""
+        return super().available and self.coordinator.ai_available()
+
+    @override
+    async def async_press(self) -> None:
+        """One model call, then upload. Plays only while Power is on."""
+        await self.coordinator.async_ai_draw(
+            self.coordinator.ai_prompt,
+            play=self.coordinator.session_on,
+        )

@@ -127,6 +127,37 @@ New uploads stop when the table already lists 700 patterns, which is under its l
 
 An upload holds the Bluetooth connection until it finishes, so power, play, and a second upload wait their turn instead of cutting the page stream. Power, light, pause, and play themselves are unchanged.
 
+## Drawing without the phone app
+
+Two ways to make a new pattern. Both save a name, the `.thr` text, and a sand preview, then upload with the same rules as a file: ids from 50000, never a stock id, never the pattern that is drawing, never the protected clean pattern, and never past 700 stored patterns.
+
+**Built-in shapes** need no assistant:
+
+```yaml
+action: homedics_drift.generate_pattern
+data:
+  type: rose
+  petals: 5
+  name: Rose
+  play: true
+```
+
+`type` is `spiral`, `rose`, `star`, `wave`, or `spirograph`. Spiral takes `turns` (1–40). Star takes `points` (3–12). Wave takes `waves`. Spirograph takes `R`, `r`, `d`, and `loops`. `play: true` starts it only while Power is on. If Power is off the pattern is still saved, and it is not played.
+
+**A prompt** uses the assistant you already set up in Home Assistant. This integration does not store an API key. Open the integration options and pick an AI Task entity. If you leave that empty, the default AI Task is used when one is installed. If there is no AI Task, a conversation agent is used instead, and you can pick which agent in the same options. Each drawing is a single request. If you have neither, **Draw with AI** stays unavailable.
+
+Type the prompt in the **AI prompt** text box, then press **Draw with AI**. Or call the service:
+
+```yaml
+action: homedics_drift.ai_draw
+data:
+  prompt: a five pointed star
+  name: Star
+  play: true
+```
+
+The assistant is asked for one list of `[x, y]` points inside a circle. Those points are resampled, kept inside the disc, started at the centre, finished on the rim, and turned into a `.thr` path. If the answer is not a path, nothing is uploaded and **AI drawing** shows the error. The same sensor shows `running` while the request is in flight and `stored` when the table has accepted the pattern.
+
 ## What this integration does not do
 
 - The table does not send a stored pattern's path back, so a preview exists only for a pattern uploaded from this Home Assistant machine. Stock patterns can be renamed for the select, but they have no picture until you upload a file of your own.

@@ -29,6 +29,7 @@ async def async_setup_entry(
             DriftPatternSensor(coordinator),
             DriftNowPlayingSensor(coordinator),
             DriftSlotSensor(coordinator),
+            DriftAiJobSensor(coordinator),
         ]
     )
 
@@ -177,3 +178,32 @@ class DriftSlotSensor(DriftEntity, SensorEntity):
         """Free slots under the cap, and files waiting in the folder."""
         used, free = self.coordinator.slot_counts()
         return {"used": used, "free": free, "cap": 700, "inbox": list(self.coordinator.inbox)}
+
+
+class DriftAiJobSensor(DriftEntity, SensorEntity):
+    """Last prompt drawing: idle, running, stored, or error."""
+
+    _attr_translation_key = "ai_job"
+    _attr_icon = "mdi:robot"
+
+    def __init__(self, coordinator: DriftCoordinator) -> None:
+        """Identify the sensor."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}-ai-job"
+
+    @property
+    def native_value(self) -> str:
+        """idle, running, stored, or error."""
+        return self.coordinator.ai_status
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        """The last error, name, and whether an assistant is available."""
+        return {
+            "error": self.coordinator.ai_error,
+            "detail": self.coordinator.ai_detail,
+            "name": self.coordinator.ai_name,
+            "pattern_id": self.coordinator.ai_pattern_id,
+            "prompt": self.coordinator.ai_prompt[:255],
+            "ai_available": self.coordinator.ai_available(),
+        }

@@ -14,6 +14,8 @@ from .coordinator import DriftCoordinator
 SERVICE_UPLOAD = "upload_pattern"
 SERVICE_DELETE = "delete_pattern"
 SERVICE_RENAME = "rename_pattern"
+SERVICE_AI_DRAW = "ai_draw"
+SERVICE_GENERATE = "generate_pattern"
 
 _UPLOAD_SCHEMA = vol.Schema(
     {
@@ -34,6 +36,31 @@ _RENAME_SCHEMA = vol.Schema(
     {
         vol.Required("pattern_id"): cv.positive_int,
         vol.Required("name"): cv.string,
+    },
+    extra=vol.ALLOW_EXTRA,
+)
+_AI_SCHEMA = vol.Schema(
+    {
+        vol.Required("prompt"): cv.string,
+        vol.Optional("name"): cv.string,
+        vol.Optional("play", default=False): cv.boolean,
+    },
+    extra=vol.ALLOW_EXTRA,
+)
+_GENERATE_SCHEMA = vol.Schema(
+    {
+        vol.Required("type"): vol.In(["spiral", "rose", "star", "wave", "spirograph"]),
+        vol.Optional("name"): cv.string,
+        vol.Optional("play", default=False): cv.boolean,
+        vol.Optional("turns"): vol.Coerce(float),
+        vol.Optional("outward"): cv.boolean,
+        vol.Optional("petals"): vol.Coerce(float),
+        vol.Optional("points"): vol.Coerce(float),
+        vol.Optional("waves"): vol.Coerce(float),
+        vol.Optional("loops"): vol.Coerce(float),
+        vol.Optional("R"): vol.Coerce(float),
+        vol.Optional("r"): vol.Coerce(float),
+        vol.Optional("d"): vol.Coerce(float),
     },
     extra=vol.ALLOW_EXTRA,
 )
@@ -63,9 +90,33 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         coordinator = await _coordinator(hass, call)
         await coordinator.async_rename_pattern(call.data["pattern_id"], call.data["name"])
 
+    async def _ai_draw(call: ServiceCall) -> None:
+        coordinator = await _coordinator(hass, call)
+        await coordinator.async_ai_draw(
+            call.data["prompt"],
+            name=call.data.get("name"),
+            play=bool(call.data.get("play")),
+        )
+
+    async def _generate(call: ServiceCall) -> None:
+        coordinator = await _coordinator(hass, call)
+        params = {
+            key: call.data[key]
+            for key in ("turns", "outward", "petals", "points", "waves", "loops", "R", "r", "d")
+            if key in call.data
+        }
+        await coordinator.async_generate_pattern(
+            call.data["type"],
+            params,
+            name=call.data.get("name"),
+            play=bool(call.data.get("play")),
+        )
+
     hass.services.async_register(DOMAIN, SERVICE_UPLOAD, _upload, schema=_UPLOAD_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_DELETE, _delete, schema=_DELETE_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_RENAME, _rename, schema=_RENAME_SCHEMA)
+    hass.services.async_register(DOMAIN, SERVICE_AI_DRAW, _ai_draw, schema=_AI_SCHEMA)
+    hass.services.async_register(DOMAIN, SERVICE_GENERATE, _generate, schema=_GENERATE_SCHEMA)
 
 
 async def _coordinator(hass: HomeAssistant, call: ServiceCall) -> DriftCoordinator:

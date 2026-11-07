@@ -28,12 +28,15 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .const import (
     BACKOFF_MAX,
     BACKOFF_START,
+    CONF_AI_TASK_ENTITY,
+    CONF_CONVERSATION_AGENT,
     DOMAIN,
     NOTIFY_UUID,
     POWER_DEBOUNCE,
     READY_TIMEOUT,
     WRITE_UUID,
 )
+from .drawing import build_instructions, generated_thr, model_text, path_from_model
 from .patterns import (
     STORAGE_CAP,
     PatternLibrary,
@@ -46,6 +49,7 @@ from .patterns import (
     deletion_refusal,
     find_stock_clean,
     inbox_names,
+    reusable_id,
     label_patterns,
     paginate,
     path_under_config,
@@ -138,6 +142,12 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         self._inbox_unsub: Any = None
         self._seen_pattern_id: int | None = None
         self._clean_follow = 0
+        self.ai_prompt = ""
+        self.ai_status = "idle"
+        self.ai_error = ""
+        self.ai_detail = ""
+        self.ai_name = ""
+        self.ai_pattern_id: int | None = None
         self._client: BleakClientWithServiceCache | None = None
         self._device: BLEDevice | None = None
         self._parser = PacketParser()
@@ -812,10 +822,14 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         async with self._command_lock:
             playing = self.data.pattern_id if self.data is not None else None
             try:
+                reuse = reusable_id(
+                    self.library.id_for_upload_name(cleaned),
+                    self.library.protected_ids(),
+                )
                 pattern_id = allocate_id(
                     set(self.patterns.pattern_ids),
                     playing=playing,
-                    reuse=self.library.id_for_upload_name(cleaned),
+                    reuse=reuse,
                 )
             except PatternRejected as err:
                 raise HomeAssistantError(err.message) from err
@@ -1034,6 +1048,149 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
             await self._save_library()
             self.preview_at = datetime.now(timezone.utc)
             self._publish()
+
+    def ai_available(self) -> bool:
+        """True when Home Assistant has an AI Task or a conversation agent.
+
+        This integration does not store an API key. With neither service, drawing
+        from a prompt is unavailable and the button stays off.
+        """
+        options = self.config_entry.options
+        if options.get(CONF_AI_TASK_ENTITY) or options.get(CONF_CONVERSATION_AGENT):
+            return True
+        return self.hass.services.has_service(
+            "ai_task", "generate_data"
+        ) or self.hass.services.has_service("conversation", "process")
+
+    def _set_ai(self, status: str, *, error: str = "", detail: str = "", name: str = "", pattern_id: int | None = None) -> None:
+        self.ai_status = status
+        self.ai_error = error
+        self.ai_detail = detail
+        if name:
+            self.ai_name = name
+        self.ai_pattern_id = pattern_id
+        self._publish()
+
+    async def _ask_once(self, prompt: str) -> str:
+        """One model call. AI Task is preferred. Conversation is only a fallback."""
+        if not self.ai_available():
+            raise HomeAssistantError(
+                "Set up an AI Task or a conversation agent in Home Assistant to draw from a prompt"
+            )
+        instructions = build_instructions(prompt)
+        options = self.config_entry.options
+        entity = options.get(CONF_AI_TASK_ENTITY) or None
+        agent = options.get(CONF_CONVERSATION_AGENT) or None
+        use_task = bool(entity) or (
+            self.hass.services.has_service("ai_task", "generate_data") and not agent
+        )
+        if use_task and self.hass.services.has_service("ai_task", "generate_data"):
+            data: dict[str, object] = {
+                "task_name": "Drift sand drawing",
+                "instructions": instructions,
+                "structure": {
+                    "path": {
+                        "description": "JSON list of [x, y] pairs between -1 and 1",
+                        "selector": {"text": {"multiline": True}},
+                    }
+                },
+            }
+            if entity:
+                data["entity_id"] = entity
+            try:
+                result = await self.hass.services.async_call(
+                    "ai_task",
+                    "generate_data",
+                    data,
+                    blocking=True,
+                    return_response=True,
+                )
+            except HomeAssistantError:
+                raise
+            except Exception as err:
+                raise HomeAssistantError(f"AI Task could not draw that: {err}") from err
+            return model_text(result)
+        if not self.hass.services.has_service("conversation", "process"):
+            raise HomeAssistantError(
+                "Set up an AI Task or a conversation agent in Home Assistant to draw from a prompt"
+            )
+        service_data: dict[str, object] = {"text": instructions}
+        if agent:
+            service_data["agent_id"] = agent
+        try:
+            result = await self.hass.services.async_call(
+                "conversation",
+                "process",
+                service_data,
+                blocking=True,
+                return_response=True,
+            )
+        except HomeAssistantError:
+            raise
+        except Exception as err:
+            raise HomeAssistantError(f"The conversation agent could not draw that: {err}") from err
+        return model_text(result)
+
+    async def async_ai_draw(self, prompt: str, *, name: str | None = None, play: bool = False) -> int:
+        """Ask the configured assistant for one path, then upload it."""
+        cleaned = " ".join(prompt.split())
+        if not cleaned:
+            raise HomeAssistantError("Type a prompt first")
+        title = (name or cleaned[:40]).strip()
+        self._set_ai("running", name=title)
+        try:
+            raw = await self._ask_once(cleaned)
+            try:
+                thr = path_from_model(raw)
+            except PatternRejected as err:
+                raise HomeAssistantError(err.message) from err
+            pattern_id = await self.async_upload_pattern(name=title, thr=thr, source="ai")
+            detail = ""
+            if play and not self.session_on:
+                detail = "Power is off, so the pattern was saved but not played"
+            elif play:
+                async with self._command_lock:
+                    if self.session_on:
+                        await self.async_send(draw_pattern(pattern_id))
+                        self._replace(pattern_id=pattern_id, status=1)
+                    else:
+                        detail = "Power is off, so the pattern was saved but not played"
+            self._set_ai("stored", detail=detail, name=title, pattern_id=pattern_id)
+            return pattern_id
+        except HomeAssistantError as err:
+            self._set_ai("error", error=str(err), name=title)
+            raise
+
+    async def async_generate_pattern(
+        self,
+        kind: str,
+        params: dict[str, object] | None = None,
+        *,
+        name: str | None = None,
+        play: bool = False,
+    ) -> int:
+        """Upload a built-in curve. No model is called."""
+        title = (name or kind).strip()
+        self._set_ai("running", name=title)
+        try:
+            try:
+                thr = generated_thr(kind, params)
+            except PatternRejected as err:
+                raise HomeAssistantError(err.message) from err
+            pattern_id = await self.async_upload_pattern(name=title, thr=thr, source="generated")
+            detail = ""
+            if play and self.session_on:
+                async with self._command_lock:
+                    if self.session_on:
+                        await self.async_send(draw_pattern(pattern_id))
+                        self._replace(pattern_id=pattern_id, status=1)
+            elif play:
+                detail = "Power is off, so the pattern was saved but not played"
+            self._set_ai("stored", detail=detail, name=title, pattern_id=pattern_id)
+            return pattern_id
+        except HomeAssistantError as err:
+            self._set_ai("error", error=str(err), name=title)
+            raise
 
     async def async_rename_pattern(self, pattern_id: int, name: str) -> None:
         """Remember a display name. Nothing is sent to the table."""
