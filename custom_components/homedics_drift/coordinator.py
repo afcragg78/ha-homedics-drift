@@ -44,6 +44,7 @@ from .drawing import (
     choose_drawing_assistant,
     clean_before_ai_drawing,
     feedback_text,
+    list_conversation_agents,
     generated_thr,
     model_text,
     path_from_model,
@@ -1090,21 +1091,12 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         return states
 
     def _conversation_agents(self) -> list[tuple[str, str]]:
+        """Conversation entities. A listing failure must not raise into the button."""
         try:
-            from homeassistant.components.conversation import async_get_agent_info
-        except ImportError:
-            return []
-        try:
-            infos = async_get_agent_info(self.hass)
+            return list_conversation_agents(self.hass)
         except Exception:
+            _LOGGER.debug("Conversation agent list failed", exc_info=True)
             return []
-        found: list[tuple[str, str]] = []
-        for info in infos or []:
-            agent_id = getattr(info, "id", None)
-            if not agent_id:
-                continue
-            found.append((str(agent_id), str(getattr(info, "name", None) or agent_id)))
-        return found
 
     def _preferred_ai_task(self) -> str | None:
         preferences = self.hass.data.get("ai_task_preferences")
@@ -1113,8 +1105,8 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
 
     def drawing_assistant(self) -> tuple[str, str] | None:
         """The explicit assistant for one drawing, or None when nothing can draw."""
-        options = self.config_entry.options
         try:
+            options = self.config_entry.options
             return choose_drawing_assistant(
                 configured_task=options.get(CONF_AI_TASK_ENTITY),
                 configured_agent=options.get(CONF_CONVERSATION_AGENT),
@@ -1122,16 +1114,22 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
                 task_states=self._task_states(),
                 agents=self._conversation_agents(),
             )
-        except PatternRejected:
+        except Exception:
+            _LOGGER.debug("Drawing assistant lookup failed", exc_info=True)
             return None
 
     def ai_available(self) -> bool:
         """True when a real AI Task or an extra conversation agent can draw.
 
         This integration does not store an API key. The button stays off when
-        nothing can be named explicitly.
+        nothing can be named explicitly. The check never raises: it runs from
+        the Draw with AI button's availability property.
         """
-        return self.drawing_assistant() is not None
+        try:
+            return self.drawing_assistant() is not None
+        except Exception:
+            _LOGGER.debug("AI availability check failed", exc_info=True)
+            return False
 
     def _set_ai(self, status: str, *, error: str = "", detail: str = "", name: str = "", pattern_id: int | None = None) -> None:
         self.ai_status = status
