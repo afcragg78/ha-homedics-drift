@@ -310,10 +310,11 @@ def current_time(moment: datetime | None = None) -> Packet:
 
 
 def power(on: bool) -> Packet:
-    """Absolute soft power, command ``0x14/16``.
+    """Command ``0x14/16``. Drifted documents this as a power bool.
 
-    ``1`` is on and ``0`` is off. This is not a toggle: the byte is the state
-    to set, and sending the same value again does not flip the table.
+    On the ST-300 it does not clear ``powerOn``. Value 0 pauses the ball and
+    the flag stays true, so the integration does not use this packet for the
+    power switch.
     """
     writer = _packet(CMD_ACTION, 16)
     writer.boolean(bool(on))
@@ -515,60 +516,114 @@ def lamp_on_packets(
     ]
 
 
-def playback_allowed(power_on: bool | None) -> bool:
-    """Play, pause, and skip are ignored while soft power is off."""
-    return power_on is not False
+def playback_allowed(session_on: bool) -> bool:
+    """Play, pause, skip, and playlist picks are ignored while the switch is off."""
+    return bool(session_on)
 
 
-def shown_playback(power_on: bool | None, drawing: bool) -> str:
-    """Player state that stays consistent with the power switch.
+# Controls the player may expose. Power is never one of them.
+PLAYER_CONTROLS_ON = frozenset({"play", "pause", "next", "previous"})
 
-    Soft power off is off even if a status byte still says drawing. Unknown
-    power follows the drawing byte, so a missing flag does not force off.
+
+def player_controls(session_on: bool) -> frozenset[str]:
+    """Buttons the player shows.
+
+    While the power switch is off there are none, so the card has no Play
+    control. Power on brings play, pause, next, and previous back. The player
+    never offers its own power button or a source list.
     """
-    if power_on is False:
+    if not session_on:
+        return frozenset()
+    return PLAYER_CONTROLS_ON
+
+
+def transport_action(action: str, session_on: bool, *, drawing: bool) -> tuple[bool, str | None]:
+    """What a player button is allowed to do.
+
+    Pause only pauses, and only while power is already on. Play never turns
+    power on. Only ``power_on`` and ``power_off`` change the switch, and those
+    are the power switch, not the player.
+    """
+    if action == "pause":
+        if session_on and drawing:
+            return session_on, "pause"
+        return session_on, None
+    if action == "play":
+        if session_on and not drawing:
+            return session_on, "resume"
+        return session_on, None
+    if action == "next" or action == "previous":
+        if session_on:
+            return session_on, action
+        return session_on, None
+    if action == "power_on":
+        return True, "session_on"
+    if action == "power_off":
+        return False, "session_off"
+    return session_on, None
+
+
+def shown_playback(session_on: bool, drawing: bool, *, settled: bool = True) -> str:
+    """Player state owned by the integration switch, not by ``powerOn``.
+
+    Off stays off while a command is in flight and while the switch is off,
+    even if the table still says it is drawing or pauses and then draws again.
+    """
+    if not session_on or not settled:
         return "off"
     if drawing:
         return "playing"
     return "paused"
 
 
-@dataclass(frozen=True, slots=True)
-class PowerHold:
-    """Absolute on/off waiting to be confirmed by ``powerOn``.
+def lamp_shown(session_on: bool, reported_lamp_on: bool) -> bool:
+    """The lamp entity is off for the whole time the power switch is off."""
+    return bool(session_on and reported_lamp_on)
 
-    ``sent`` is false while the write is still queued. Status from that window
-    must not undo the switch. Once the byte is on the wire, the next report
-    confirms a match or replaces the switch when the table disagrees.
+
+def session_actions(turn_on: bool, *, drawing: bool) -> tuple[str, ...]:
+    """Commands for the integration power switch.
+
+    Drifted's ``0x14/16`` is not a real power-off on this table, so it is not
+    in the list. Off pauses a drawing ball and turns the lamp off. On restores
+    the lamp and resumes play when the ball is idle.
     """
+    if turn_on:
+        if drawing:
+            return ("light_on",)
+        return ("light_on", "resume")
+    if drawing:
+        return ("pause", "light_off")
+    return ("light_off",)
 
-    on: bool
-    sent: bool = False
 
+def project_session(
+    session_on: bool,
+    *,
+    settled: bool,
+    reported_power: bool | None,
+    drawing: bool,
+    reported_lamp: bool,
+) -> tuple[bool, str, bool]:
+    """Switch, player, and lamp after one status packet.
 
-def reconcile_power(
-    reported: bool | None, hold: PowerHold | None
-) -> tuple[bool | None, PowerHold | None]:
-    """Follow the table's ``powerOn`` flag after the command has been sent.
-
-    A report that matches clears the wait. A report that disagrees becomes
-    the switch state, so a missed command cannot leave Home Assistant inverted.
+    ``reported_power`` is the table's ``powerOn`` byte. It is ignored. A packet
+    that still says power is on, or that pauses and then draws again, cannot
+    move the switch or light the player back up while the switch is off.
     """
-    if hold is not None and not hold.sent:
-        return hold.on, hold
-    if reported is None:
-        if hold is None:
-            return None, None
-        return hold.on, hold
-    return reported, None
+    del reported_power
+    return (
+        session_on,
+        shown_playback(session_on, drawing, settled=settled),
+        lamp_shown(session_on, reported_lamp) and settled,
+    )
 
 
 @dataclass(slots=True)
 class PowerQueue:
-    """Collapse rapid on/off requests to the latest absolute value.
+    """Collapse rapid switch presses to the latest integration state.
 
-    Each ``push`` replaces whatever was waiting. ``pop`` returns that one
-    value, so a burst of flips becomes a single ``0x14/16`` write.
+    One worker performs that state, so a burst cannot interleave pause and play.
     """
 
     pending: bool | None = None

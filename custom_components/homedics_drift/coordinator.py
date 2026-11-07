@@ -36,7 +36,6 @@ from .protocol import (
     Kind,
     LampHold,
     Message,
-    PowerHold,
     PatternCatalogue,
     PlaylistCatalogue,
     alarm_text,
@@ -48,8 +47,8 @@ from .protocol import (
     reconcile_lamp,
     next_pattern,
     play_pause,
-    power,
     previous_pattern,
+    session_actions,
     reply_for,
     speed_raw,
     Packet,
@@ -57,7 +56,6 @@ from .protocol import (
     PowerQueue,
     percent_to_speed_raw,
     playback_allowed,
-    reconcile_power,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -94,7 +92,11 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         self.lamp_color: tuple[int, int, int] = (255, 255, 255)
         self.lamp_color_name = "Temp"
         self._lamp_hold: LampHold | None = None
-        self._power_hold: PowerHold | None = None
+        # Owned by the integration. The table's powerOn byte does not write this.
+        self.session_on = True
+        self.session_settled = True
+        self._session_restored = False
+        self._off_enforced = False
         self._power_queue = PowerQueue()
         self._power_worker: asyncio.Task[None] | None = None
         self._client: BleakClientWithServiceCache | None = None
@@ -241,6 +243,7 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         patterns_changed = self.patterns.note(message)
         if message.kind is Kind.WAITING:
             self._ready.clear()
+            self._off_enforced = False
             self._publish()
             return
         if message.kind is Kind.INIT_COMPLETE:
@@ -253,10 +256,10 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
                 )
             self._ready.set()
             self._publish()
+            self._enforce_saved_off()
             return
         if message.kind is Kind.STATE and message.state is not None:
             self._apply_lamp_report(message.state, message.state.brightness)
-            self._apply_power_report(message.state)
             self.async_set_updated_data(message.state)
             return
         if message.kind is Kind.LIGHT_MODE and message.light_brightness is not None:
@@ -282,7 +285,15 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
                 _LOGGER.debug("Unrecognized Drift playlist packet: %s", key)
 
     def _apply_lamp_report(self, state: DriftState, reported: int) -> None:
-        """Publish lamp on/off without letting a stale status undo a command."""
+        """Publish lamp on/off without letting a stale status undo a command.
+
+        While the power switch is off the lamp stays off in Home Assistant.
+        A brightness the table still reports must not be remembered as the
+        level to restore, and must not turn the lamp entity back on.
+        """
+        if not self.session_on:
+            state.lamp_on = False
+            return
         level, lamp_on, self._lamp_hold = reconcile_lamp(reported, self._lamp_hold)
         state.brightness = level
         state.lamp_on = lamp_on
@@ -291,6 +302,16 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
             self.lamp_color = state.color
             if state.color_name:
                 self.lamp_color_name = state.color_name
+
+    def _remember_lamp(self) -> None:
+        """Keep the lit colour and level before the power switch turns the lamp off."""
+        state = self.data
+        if state is None or not state.lamp_on or state.brightness <= 0:
+            return
+        self.lamp_brightness = state.brightness
+        self.lamp_color = state.color
+        if state.color_name:
+            self.lamp_color_name = state.color_name
 
     def _apply_light_mode(self, message: Message) -> None:
         """Apply the table's ``0x31/4`` light-mode echo. Brightness 0 is off."""
@@ -304,11 +325,6 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
             self.data.breathing = message.light_breathing
         self._apply_lamp_report(self.data, message.light_brightness)
         self.async_set_updated_data(self.data)
-
-    def _apply_power_report(self, state: DriftState) -> None:
-        """Keep soft sleep until the table echoes ``powerOn``."""
-        value, self._power_hold = reconcile_power(state.power_on, self._power_hold)
-        state.power_on = value
 
     def _publish(self) -> None:
         if self.data is not None:
@@ -372,17 +388,25 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
             setattr(state, key, value)
         self.async_set_updated_data(state)
 
-    async def async_set_power(self, on: bool) -> None:
-        """Soft sleep or wake with an absolute ``0x14/16`` value.
+    def adopt_session(self, on: bool) -> None:
+        """Restore the switch from Home Assistant, without reading ``powerOn``."""
+        self.session_on = bool(on)
+        self._session_restored = True
+        self.session_settled = True
+        self._publish()
+        self._enforce_saved_off()
 
-        ``True`` sends 1 and ``False`` sends 0. Rapid flips are collapsed to
-        the last value and written one at a time. The switch shows that value
-        until the table reports ``powerOn``; a different report wins.
-        """
-        requested = bool(on)
-        self._power_queue.push(requested)
-        self._power_hold = PowerHold(requested)
-        self._replace(power_on=requested)
+    def _enforce_saved_off(self) -> None:
+        """After connect, make a restored off switch pause and extinguish once."""
+        if self._shut_down or not self._session_restored or self.session_on:
+            return
+        if not self._ready.is_set() or self._off_enforced:
+            return
+        self._off_enforced = True
+        self._power_queue.push(False)
+        self._ensure_power_worker()
+
+    def _ensure_power_worker(self) -> None:
         worker = self._power_worker
         if worker is None or worker.done():
             self._power_worker = self.hass.async_create_task(
@@ -390,37 +414,85 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
                 name=f"{DOMAIN}-power-{self.address}",
             )
 
+    async def async_set_power(self, on: bool) -> None:
+        """Integration power. Off pauses and turns the lamp off. On restores both.
+
+        The switch changes immediately and is not revised by status packets.
+        Quick presses collapse to the last request and run one at a time.
+        ``0x14/16`` is not sent.
+        """
+        requested = bool(on)
+        if not requested:
+            self._remember_lamp()
+        self.session_on = requested
+        self.session_settled = False
+        self._power_queue.push(requested)
+        self._publish()
+        self._ensure_power_worker()
+
     async def _drain_power(self) -> None:
-        """Write the latest absolute power value, then any value that arrived later."""
+        """Run the latest pause/light or restore/resume sequence."""
         while not self._shut_down:
             try:
                 await asyncio.sleep(POWER_DEBOUNCE)
                 target = self._power_queue.pop()
                 if target is None:
+                    self.session_settled = True
+                    self._publish()
                     return
-                await self.async_send(power(target))
-                # A newer request replaces the hold before this write returns.
-                if self._power_hold is not None and self._power_hold.on is target:
-                    self._power_hold = PowerHold(target, sent=True)
+                self.session_on = target
+                self.session_settled = False
+                self._publish()
+                if target:
+                    await self._session_on()
+                else:
+                    await self._session_off()
             except asyncio.CancelledError:
                 raise
             except Exception:
-                _LOGGER.debug("Drift power command was not written", exc_info=True)
+                _LOGGER.debug("Drift power change was not finished", exc_info=True)
                 if self._power_queue.pending is None:
-                    self._power_hold = None
+                    self.session_settled = True
                     self._publish()
                     return
 
+    async def _session_off(self) -> None:
+        """Pause a moving ball, then turn the lamp off. Leave ``powerOn`` alone."""
+        drawing = bool(self.data and self.data.drawing)
+        for action in session_actions(False, drawing=drawing):
+            if action == "pause":
+                await self.async_send(play_pause())
+                self._replace(status=0)
+            elif action == "light_off":
+                await self.async_set_brightness(0)
+
+    async def _session_on(self) -> None:
+        """Restore the remembered lamp, then resume play if the ball is idle."""
+        drawing = bool(self.data and self.data.drawing)
+        for action in session_actions(True, drawing=drawing):
+            if action == "light_on":
+                await self.async_turn_lamp_on(max(1, self.lamp_brightness))
+            elif action == "resume":
+                if self.data is None or not self.data.drawing:
+                    await self.async_send(play_pause())
+                    self._replace(status=1)
+
     async def async_toggle_playback(self) -> None:
-        """Send the protocol's play/pause toggle."""
+        """Send play/pause. This does not change the power switch."""
+        if not playback_allowed(self.session_on):
+            return
         drawing = bool(self.data and self.data.drawing)
         await self.async_send(play_pause())
         self._replace(status=0 if drawing else 1)
 
     async def async_next(self) -> None:
+        if not playback_allowed(self.session_on):
+            return
         await self.async_send(next_pattern())
 
     async def async_previous(self) -> None:
+        if not playback_allowed(self.session_on):
+            return
         await self.async_send(previous_pattern())
 
     async def async_set_speed_percent(self, percent: float) -> None:
@@ -498,9 +570,9 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         )
 
     def _require_awake(self) -> None:
-        """Refuse playback while soft power is off so sleep stays off."""
-        if self.data is not None and not playback_allowed(self.data.power_on):
-            raise HomeAssistantError("Drift table is asleep")
+        """Refuse playback while the integration power switch is off."""
+        if not playback_allowed(self.session_on):
+            raise HomeAssistantError("Drift power is off")
 
     async def async_select_playlist(self, label: str) -> None:
         """Draw the playlist the table reported under ``label``."""
