@@ -12,6 +12,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .coordinator import DriftConfigEntry, DriftCoordinator
 from .entity import DriftEntity
+from .protocol import playlist_pattern_index
 
 
 async def async_setup_entry(
@@ -26,6 +27,7 @@ async def async_setup_entry(
             DriftStatusSensor(coordinator),
             DriftProgressSensor(coordinator),
             DriftPatternSensor(coordinator),
+            DriftNowPlayingSensor(coordinator),
         ]
     )
 
@@ -109,3 +111,43 @@ class DriftPatternSensor(DriftEntity, SensorEntity):
     def native_value(self) -> int:
         """Pattern id. Zero is what the table reports while idle."""
         return self._state.pattern_id
+
+
+class DriftNowPlayingSensor(DriftEntity, SensorEntity):
+    """The pattern the table is on, plus the list of everything it has stored.
+
+    The name is ``Pattern N`` because the table's own list is ids, not titles.
+    Playlist, the 1-based position in that playlist, and progress come from the
+    running-state broadcast the table already sends. The stored-name list is
+    the ``0x33`` dump from the handshake, not a separate read.
+    """
+
+    _attr_translation_key = "now_playing"
+    _attr_icon = "mdi:draw"
+
+    def __init__(self, coordinator: DriftCoordinator) -> None:
+        """Identify the sensor."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}-now-playing"
+
+    @property
+    def native_value(self) -> str:
+        """Current pattern label, or Idle when the table reports pattern 0."""
+        label = self.coordinator.patterns.label_for(self._state.pattern_id)
+        return label if label is not None else "Idle"
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        """Playlist, index, progress, and every stored pattern label."""
+        state = self._state
+        playlist = self.coordinator.catalogue.playlist_for(state.playlist_id)
+        index = None
+        if playlist is not None:
+            index = playlist_pattern_index(playlist.pattern_ids, state.pattern_id)
+        return {
+            "playlist": self.coordinator.catalogue.label_for(state.playlist_id),
+            "pattern_id": state.pattern_id,
+            "pattern_index": index,
+            "progress": round(state.progress * 100, 2),
+            "stored_patterns": self.coordinator.patterns.names(),
+        }

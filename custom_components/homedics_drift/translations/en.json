@@ -37,6 +37,9 @@
     "select": {
       "playlist": {
         "name": "Playlist"
+      },
+      "pattern": {
+        "name": "Pattern"
       }
     },
     "sensor": {
@@ -52,7 +55,10 @@
         "name": "Progress"
       },
       "pattern": {
-        "name": "Pattern"
+        "name": "Pattern id"
+      },
+      "now_playing": {
+        "name": "Now Playing"
       }
     },
     "switch": {

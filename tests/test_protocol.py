@@ -18,12 +18,14 @@ from custom_components.homedics_drift.protocol import (
     CMD_FIRMWARE,
     Packet,
     PacketParser,
+    PatternCatalogue,
     PlaylistCatalogue,
     alarm_text,
     brightness,
     confirm_connection,
     confirm_data,
     current_time,
+    decode,
     delete_patterns,
     draw_pattern,
     draw_playlist,
@@ -41,7 +43,9 @@ from custom_components.homedics_drift.protocol import (
     playback_allowed,
     normalize_advertised_name,
     resolved_lamp_level,
+    pattern_label,
     pattern_page,
+    playlist_pattern_index,
     percent_to_speed_raw,
     next_pattern,
     play_pause,
@@ -562,6 +566,49 @@ def test_playlist_timestamp_id_keeps_a_separate_name() -> None:
     assert playlist.pattern_ids == (7,)
     assert catalogue.label_for(stamp) == "Evening"
     assert stamp not in {label for label, _item in catalogue.options()}
+
+
+def _pattern_packet(action: int, payload: bytes = b"") -> Packet:
+    return Packet(0x33, bytes((action,)) + payload)
+
+
+def test_stored_patterns_are_ids_labeled_pattern_n() -> None:
+    catalogue = PatternCatalogue()
+    assert catalogue.note(decode(_pattern_packet(1))) is False
+    page = bytes((0x00, 0x03, 0x02, 0x00, 0x01, 0x00, 0x0A, 0x00))
+    assert catalogue.note(decode(_pattern_packet(3, page))) is True
+    assert catalogue.note(decode(_pattern_packet(3, bytes((0x01, 0x01, 0x00, 0x00))))) is False
+    assert catalogue.pattern_ids == (1, 2, 10)
+    assert catalogue.names() == ["Pattern 1", "Pattern 2", "Pattern 10"]
+    assert catalogue.by_label("Pattern 2") == 2
+    assert catalogue.label_for(2) == "Pattern 2"
+    assert catalogue.label_for(0) is None
+    assert pattern_label(834) == "Pattern 834"
+    assert catalogue.note(decode(_pattern_packet(2))) is False
+
+
+def test_pattern_dump_replaces_the_previous_list() -> None:
+    catalogue = PatternCatalogue()
+    catalogue.note(decode(_pattern_packet(3, bytes((0x00, 0x01, 0x05, 0x00)))))
+    catalogue.note(decode(_pattern_packet(1)))
+    catalogue.note(decode(_pattern_packet(3, bytes((0x00, 0x01, 0x09, 0x00)))))
+    assert catalogue.names() == ["Pattern 9"]
+    catalogue.note(decode(_pattern_packet(1)))
+    assert catalogue.note(decode(_pattern_packet(2))) is True
+    assert catalogue.names() == []
+
+
+def test_new_handshake_clears_stored_patterns() -> None:
+    catalogue = PatternCatalogue()
+    catalogue.note(decode(_pattern_packet(3, bytes((0x00, 0x01, 0x04, 0x00)))))
+    waiting = decode(Packet(0x50, bytes((1,))))
+    assert catalogue.note(waiting) is True
+    assert catalogue.names() == []
+
+
+def test_playlist_pattern_index_is_one_based() -> None:
+    assert playlist_pattern_index((4, 9, 12), 9) == 2
+    assert playlist_pattern_index((4, 9), 3) is None
 
 
 def test_upload_stored_is_the_only_success_signal() -> None:

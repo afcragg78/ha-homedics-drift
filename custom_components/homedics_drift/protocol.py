@@ -839,6 +839,8 @@ class Kind(StrEnum):
     NO_STORAGE = "no_storage"
     ALARM = "alarm"
     PATTERNS = "patterns"
+    PATTERNS_START = "patterns_start"
+    PATTERNS_END = "patterns_end"
     OTHER = "other"
 
 
@@ -905,6 +907,10 @@ def decode(packet: Packet, *, next_playlist_index: int = 1) -> Message:
         except ProtocolError:
             return Message(Kind.OTHER, packet)
         return Message(Kind.ALARM, packet, alarm_kind=action, alarm_codes=codes)
+    if command == CMD_PATTERNS and action == 1:
+        return Message(Kind.PATTERNS_START, packet)
+    if command == CMD_PATTERNS and action == 2:
+        return Message(Kind.PATTERNS_END, packet)
     if command == CMD_PATTERNS and action == 3:
         reader = _Reader(packet.arguments)
         try:
@@ -1027,6 +1033,15 @@ class PlaylistCatalogue:
                 return playlist
         return None
 
+    def playlist_for(self, protocol_id: str) -> Playlist | None:
+        """The playlist whose wire id matches the running state."""
+        if not protocol_id:
+            return None
+        for playlist in self.playlists:
+            if playlist.protocol_id == protocol_id:
+                return playlist
+        return None
+
     def ingest(self, packet: Packet) -> Message:
         """Decode ``packet``, refreshing playlists when the table sends them.
 
@@ -1040,6 +1055,95 @@ class PlaylistCatalogue:
         else:
             self.apply(message)
         return message
+
+
+def pattern_label(pattern_id: int) -> str:
+    """Label for a stored pattern.
+
+    The table's pattern list (``0x33``) is ids only. Drifted keeps human names
+    on the computer that uploaded a drawing, not on the table, so a pattern
+    the table knows is shown as ``Pattern N``.
+    """
+    return f"Pattern {int(pattern_id)}"
+
+
+def playlist_pattern_index(pattern_ids: tuple[int, ...] | list[int], pattern_id: int) -> int | None:
+    """1-based position of ``pattern_id`` in a playlist, when that playlist lists it."""
+    try:
+        return tuple(pattern_ids).index(pattern_id) + 1
+    except ValueError:
+        return None
+
+
+@dataclass(slots=True)
+class PatternCatalogue:
+    """Pattern ids the table listed with ``0x33``.
+
+    The handshake dumps them, and the table sends the list again after an
+    upload or delete. Nothing is requested on a timer. A start (``0x33/1``)
+    begins a fresh dump; pages (``0x33/3``) add ids; an end with no pages
+    means the table stored nothing. Id 0 is the idle placeholder and is not
+    offered as a pattern to play.
+    """
+
+    pattern_ids: tuple[int, ...] = ()
+    _reset_pending: bool = False
+
+    def clear(self) -> None:
+        self.pattern_ids = ()
+        self._reset_pending = False
+
+    def note(self, message: Message) -> bool:
+        """Merge one decoded message. Return True when the stored ids changed."""
+        if message.kind is Kind.WAITING:
+            changed = bool(self.pattern_ids)
+            self.clear()
+            return changed
+        if message.kind is Kind.PATTERNS_START:
+            self._reset_pending = True
+            return False
+        if message.kind is Kind.PATTERNS_END:
+            if not self._reset_pending:
+                return False
+            changed = bool(self.pattern_ids)
+            self.pattern_ids = ()
+            self._reset_pending = False
+            return changed
+        if message.kind is not Kind.PATTERNS:
+            return False
+        incoming = message.pattern_ids or []
+        if self._reset_pending:
+            merged = tuple(incoming)
+            self._reset_pending = False
+        else:
+            merged = (*self.pattern_ids, *incoming)
+        ordered = tuple(sorted({pattern_id for pattern_id in merged if pattern_id}))
+        if ordered == self.pattern_ids:
+            return False
+        self.pattern_ids = ordered
+        return True
+
+    def options(self) -> list[tuple[str, int]]:
+        """Labels in id order. The table does not send a separate name."""
+        return [(pattern_label(pattern_id), pattern_id) for pattern_id in self.pattern_ids]
+
+    def names(self) -> list[str]:
+        return [label for label, _pattern_id in self.options()]
+
+    def by_label(self, label: str) -> int | None:
+        for option, pattern_id in self.options():
+            if option == label:
+                return pattern_id
+        return None
+
+    def label_for(self, pattern_id: int) -> str | None:
+        """``Pattern N`` when the table has reported that id. Idle (0) is unnamed."""
+        if pattern_id <= 0:
+            return None
+        for option, stored in self.options():
+            if stored == pattern_id:
+                return option
+        return pattern_label(pattern_id)
 
 
 def normalize_advertised_name(name: str | None) -> str:
