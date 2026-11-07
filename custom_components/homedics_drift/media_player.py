@@ -85,7 +85,7 @@ class DriftPlayer(DriftEntity, MediaPlayerEntity):
         data = self.coordinator.data
         if data is None:
             return None
-        return self.coordinator.patterns.label_for(data.pattern_id)
+        return self.coordinator.display_name(data.pattern_id)
 
     @property
     def media_playlist(self) -> str | None:

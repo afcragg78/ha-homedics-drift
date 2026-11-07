@@ -937,6 +937,7 @@ class Kind(StrEnum):
     UPLOAD_STARTED = "upload_started"
     UPLOAD_STORED = "upload_stored"
     UPLOAD_FAILED = "upload_failed"
+    DELETE_COMPLETE = "delete_complete"
     NO_STORAGE = "no_storage"
     ALARM = "alarm"
     PATTERNS = "patterns"
@@ -1032,6 +1033,7 @@ def _decode_upload(packet: Packet) -> Message:
             kind = {
                 2: Kind.UPLOAD_STARTED,
                 3: Kind.UPLOAD_STORED,
+                4: Kind.DELETE_COMPLETE,
                 5: Kind.UPLOAD_FAILED,
                 6: Kind.NO_STORAGE,
             }.get(packet.action, Kind.OTHER)

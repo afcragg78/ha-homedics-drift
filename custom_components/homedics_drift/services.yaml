@@ -1,0 +1,57 @@
+upload_pattern:
+  fields:
+    device_id:
+      selector:
+        device:
+          integration: homedics_drift
+    name:
+      required: true
+      example: Spiral
+      selector:
+        text:
+    path:
+      example: /config/drift_patterns/spiral.thr
+      selector:
+        text:
+    thr:
+      selector:
+        text:
+          multiline: true
+
+delete_pattern:
+  fields:
+    device_id:
+      selector:
+        device:
+          integration: homedics_drift
+    pattern_id:
+      example: 50000
+      selector:
+        number:
+          min: 50000
+          max: 65535
+          mode: box
+    name:
+      example: Spiral
+      selector:
+        text:
+
+rename_pattern:
+  fields:
+    device_id:
+      selector:
+        device:
+          integration: homedics_drift
+    pattern_id:
+      required: true
+      example: 12
+      selector:
+        number:
+          min: 1
+          max: 65535
+          mode: box
+    name:
+      required: true
+      example: Evening spiral
+      selector:
+        text:

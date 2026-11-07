@@ -20,7 +20,11 @@ async def async_setup_entry(
     """Create the playlist and pattern selects."""
     coordinator = entry.runtime_data
     async_add_entities(
-        [DriftPlaylistSelect(coordinator), DriftPatternSelect(coordinator)]
+        [
+            DriftPlaylistSelect(coordinator),
+            DriftPatternSelect(coordinator),
+            DriftInboxSelect(coordinator),
+        ]
     )
 
 
@@ -58,11 +62,10 @@ class DriftPlaylistSelect(DriftEntity, SelectEntity):
 
 
 class DriftPatternSelect(DriftEntity, SelectEntity):
-    """Every pattern id the table listed, shown as ``Pattern N``.
+    """Every pattern id the table listed.
 
-    Choosing one sends draw-pattern (``0x14/1``). The list is the handshake
-    dump (``0x33``), refreshed when the table sends it again. Soft sleep
-    blocks the command so picking a pattern does not wake the table.
+    Uploaded patterns and renamed stock ids use the name saved on this
+    Home Assistant machine. Choosing one plays that id. Power off blocks it.
     """
 
     _attr_translation_key = "pattern"
@@ -76,13 +79,13 @@ class DriftPatternSelect(DriftEntity, SelectEntity):
     @property
     def options(self) -> list[str]:
         """Stored pattern labels, in id order."""
-        return [label for label, _pattern_id in self.coordinator.patterns.options()]
+        return [label for label, _pattern_id in self.coordinator.pattern_choices()]
 
     @property
     def current_option(self) -> str | None:
         """The pattern in the latest running state, when the table has stored it."""
         current = self._state.pattern_id
-        for label, pattern_id in self.coordinator.patterns.options():
+        for label, pattern_id in self.coordinator.pattern_choices():
             if pattern_id == current:
                 return label
         return None
@@ -91,3 +94,36 @@ class DriftPatternSelect(DriftEntity, SelectEntity):
     async def async_select_option(self, option: str) -> None:
         """Play this stored pattern."""
         await self.coordinator.async_select_pattern(option)
+
+
+class DriftInboxSelect(DriftEntity, SelectEntity):
+    """``.thr`` files in the pattern folder that have not been uploaded.
+
+    Choosing one only marks it. The upload button sends it.
+    """
+
+    _attr_translation_key = "inbox"
+    _attr_icon = "mdi:file-import"
+
+    def __init__(self, coordinator: DriftCoordinator) -> None:
+        """Identify the select."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}-inbox"
+
+    @property
+    def options(self) -> list[str]:
+        return list(self.coordinator.inbox)
+
+    @property
+    def current_option(self) -> str | None:
+        if self.coordinator.inbox_choice in self.coordinator.inbox:
+            return self.coordinator.inbox_choice
+        return None
+
+    @override
+    async def async_select_option(self, option: str) -> None:
+        """Remember the file. This does not upload it."""
+        if option not in self.coordinator.inbox:
+            return
+        self.coordinator.inbox_choice = option
+        self.async_write_ha_state()
