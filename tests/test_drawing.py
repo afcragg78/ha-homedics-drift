@@ -8,9 +8,13 @@ import pytest
 
 from custom_components.homedics_drift.drawing import (
     UploadTicks,
+    agents_from_conversation_entities,
+    agents_from_info_payload,
     choose_drawing_assistant,
     clean_before_ai_drawing,
+    conversation_dropdown,
     feedback_text,
+    list_conversation_agents,
     generated_thr,
     generate_points,
     model_text,
@@ -78,6 +82,99 @@ def test_ai_task_is_always_named_when_options_are_empty() -> None:
             task_states=[],
             agents=[("conversation.home_assistant", "Home Assistant")],
         )
+
+
+class _AgentInfo:
+    """The 2026.11 shape: one object, and iterating it is a TypeError."""
+
+    def __init__(self, agent_id: str, name: str) -> None:
+        self.id = agent_id
+        self.name = name
+
+    def __iter__(self):
+        raise TypeError("'AgentInfo' object is not iterable")
+
+
+class _State:
+    def __init__(self, name: str, state: str = "idle") -> None:
+        self.name = name
+        self.state = state
+
+
+class _States:
+    def __init__(self, items: dict[str, _State]) -> None:
+        self._items = items
+
+    def async_entity_ids(self, domain: str) -> list[str]:
+        return [entity_id for entity_id in self._items if entity_id.startswith(f"{domain}.")]
+
+    def get(self, entity_id: str) -> _State | None:
+        return self._items.get(entity_id)
+
+
+class _Hass:
+    def __init__(self, items: dict[str, _State]) -> None:
+        self.states = _States(items)
+
+
+def test_agent_info_is_accepted_as_one_object_or_a_list() -> None:
+    single = _AgentInfo("conversation.openai", "OpenAI")
+    with pytest.raises(TypeError, match="not iterable"):
+        list(single)
+    assert agents_from_info_payload(single) == [("conversation.openai", "OpenAI")]
+    assert agents_from_info_payload(
+        [
+            _AgentInfo("conversation.home_assistant", "Home Assistant"),
+            _AgentInfo("conversation.openai", "OpenAI"),
+        ]
+    ) == [
+        ("conversation.home_assistant", "Home Assistant"),
+        ("conversation.openai", "OpenAI"),
+    ]
+    assert agents_from_info_payload(None) == []
+    assert agents_from_info_payload({"id": "conversation.google", "name": "Google"}) == [
+        ("conversation.google", "Google")
+    ]
+
+
+def test_conversation_entities_replace_the_agent_info_api() -> None:
+    found = agents_from_conversation_entities(
+        states=[
+            ("conversation.openai", "My OpenAI", "idle"),
+            ("light.lamp", "Lamp", "on"),
+        ],
+        registry=[
+            ("conversation.openai", "Other", "Original"),
+            ("conversation.google", None, "Google"),
+            ("ai_task.openai", "Task", None),
+        ],
+    )
+    assert found == [
+        ("conversation.google", "Google"),
+        ("conversation.openai", "My OpenAI"),
+    ]
+    hass = _Hass(
+        {
+            "conversation.home_assistant": _State("Home Assistant"),
+            "conversation.openai": _State("OpenAI"),
+            "light.lamp": _State("Lamp"),
+        }
+    )
+    assert list_conversation_agents(hass) == [
+        ("conversation.home_assistant", "Home Assistant"),
+        ("conversation.openai", "OpenAI"),
+    ]
+    assert conversation_dropdown(hass) == [
+        {"value": "conversation.openai", "label": "OpenAI — conversation.openai"}
+    ]
+
+    class _Broken:
+        @property
+        def states(self) -> object:
+            raise RuntimeError("state machine down")
+
+    assert conversation_dropdown(_Broken()) == []
+    assert list_conversation_agents(_Broken()) == []
 
 
 def test_ai_drawings_clean_first_only_while_power_is_on() -> None:

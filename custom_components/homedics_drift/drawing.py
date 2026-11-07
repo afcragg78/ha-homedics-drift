@@ -22,6 +22,140 @@ DEFAULT_CONVERSATION_AGENTS = frozenset(
 _UNAVAILABLE = "unavailable"
 
 
+def agents_from_info_payload(payload: object) -> list[tuple[str, str]]:
+    """One AgentInfo, a list of them, or nothing.
+
+    Home Assistant 2026.11 can return a single AgentInfo. That object is not a
+    list, and iterating it raises TypeError, so a lone info is taken as one
+    agent before any loop.
+    """
+    if payload is None or isinstance(payload, (str, bytes)):
+        return []
+    if isinstance(payload, (list, tuple)):
+        items: list[object] = list(payload)
+    elif isinstance(payload, dict) or getattr(payload, "id", None):
+        items = [payload]
+    else:
+        return []
+    found: list[tuple[str, str]] = []
+    for info in items:
+        if isinstance(info, dict):
+            agent_id = info.get("id")
+            name = info.get("name")
+        else:
+            agent_id = getattr(info, "id", None)
+            name = getattr(info, "name", None)
+        if not agent_id:
+            continue
+        found.append((str(agent_id), str(name or agent_id)))
+    return found
+
+
+def agents_from_conversation_entities(
+    states: list[tuple[str, str | None, str | None]] | None = None,
+    registry: list[tuple[str, str | None, str | None]] | None = None,
+) -> list[tuple[str, str]]:
+    """Names for conversation.* entities from the state machine and registry.
+
+    ``states`` rows are ``(entity_id, friendly_name, state)``. Registry rows are
+    ``(entity_id, name, original_name)``. A state name wins when both exist.
+    """
+    names: dict[str, str] = {}
+    order: list[str] = []
+
+    def remember(entity_id: object, name: object) -> None:
+        text = str(entity_id or "")
+        if not text.startswith("conversation."):
+            return
+        if text not in names:
+            order.append(text)
+            names[text] = ""
+        label = str(name).strip() if isinstance(name, str) else ""
+        if label and label != text and not names[text]:
+            names[text] = label
+
+    for entity_id, name, _state in states or []:
+        remember(entity_id, name)
+    for entity_id, name, original in registry or []:
+        remember(entity_id, name or original)
+    return [(entity_id, names[entity_id] or entity_id) for entity_id in sorted(order)]
+
+
+def conversation_agent_options(agents: list[tuple[str, str]]) -> list[dict[str, str]]:
+    """Dropdown rows for agents other than the built-in Home Assistant one."""
+    options: list[dict[str, str]] = []
+    for agent_id, name in agents:
+        if not agent_id or agent_id in DEFAULT_CONVERSATION_AGENTS:
+            continue
+        label = name or agent_id
+        options.append({"value": agent_id, "label": f"{label} — {agent_id}"})
+    return options
+
+
+def _registry_rows(hass: object) -> list[tuple[str, str | None, str | None]]:
+    """Conversation entities from the registry. Missing registry means none."""
+    try:
+        from homeassistant.helpers.entity_registry import async_get
+    except ImportError:
+        return []
+    try:
+        registry = async_get(hass)
+        entities = getattr(registry, "entities", None)
+        if entities is None:
+            return []
+        entries = entities.values() if hasattr(entities, "values") else entities
+        rows: list[tuple[str, str | None, str | None]] = []
+        for entry in entries:
+            entity_id = getattr(entry, "entity_id", None)
+            if not entity_id:
+                continue
+            rows.append(
+                (
+                    str(entity_id),
+                    getattr(entry, "name", None),
+                    getattr(entry, "original_name", None),
+                )
+            )
+        return rows
+    except Exception:
+        return []
+
+
+def list_conversation_agents(hass: object) -> list[tuple[str, str]]:
+    """conversation.* entities. Does not call the conversation agent-info API."""
+    states: list[tuple[str, str | None, str | None]] = []
+    try:
+        machine = getattr(hass, "states", None)
+        entity_ids = machine.async_entity_ids("conversation") if machine is not None else []
+    except Exception:
+        machine = None
+        entity_ids = []
+    for entity_id in entity_ids or []:
+        try:
+            state = machine.get(entity_id) if machine is not None else None
+        except Exception:
+            state = None
+        states.append(
+            (
+                str(entity_id),
+                getattr(state, "name", None) if state is not None else None,
+                getattr(state, "state", None) if state is not None else None,
+            )
+        )
+    try:
+        return agents_from_conversation_entities(states, _registry_rows(hass))
+    except Exception:
+        return []
+
+
+def conversation_dropdown(hass: object) -> list[dict[str, str]]:
+    """Options-flow rows. Listing errors become an empty dropdown, never a 500."""
+    try:
+        return conversation_agent_options(list_conversation_agents(hass))
+    except Exception:
+        return []
+
+
 def choose_drawing_assistant(
     *,
     configured_task: str | None,

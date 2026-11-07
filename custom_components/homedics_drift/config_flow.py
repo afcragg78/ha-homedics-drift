@@ -21,14 +21,22 @@ from .const import (
     CONF_CONVERSATION_AGENT,
     DOMAIN,
 )
+from .drawing import conversation_dropdown
 from .protocol import is_drift_name, normalize_advertised_name
 
 
 def _ai_task_dropdown(hass: Any) -> list[dict[str, str]]:
     """Every AI Task entity, named so the dropdown is obvious."""
+    try:
+        entity_ids = sorted(hass.states.async_entity_ids("ai_task"))
+    except Exception:
+        return []
     options: list[dict[str, str]] = []
-    for entity_id in sorted(hass.states.async_entity_ids("ai_task")):
-        state = hass.states.get(entity_id)
+    for entity_id in entity_ids:
+        try:
+            state = hass.states.get(entity_id)
+        except Exception:
+            state = None
         friendly = getattr(state, "name", None) or entity_id
         if state is None or state.state == "unavailable":
             friendly = f"{friendly} (unavailable)"
@@ -37,23 +45,8 @@ def _ai_task_dropdown(hass: Any) -> list[dict[str, str]]:
 
 
 def _conversation_agent_dropdown(hass: Any) -> list[dict[str, str]]:
-    """Conversation agents other than the built-in one, which cannot draw."""
-    try:
-        from homeassistant.components.conversation import async_get_agent_info
-    except ImportError:
-        return []
-    try:
-        infos = async_get_agent_info(hass)
-    except Exception:
-        return []
-    options: list[dict[str, str]] = []
-    for info in infos or []:
-        agent_id = getattr(info, "id", None)
-        if not agent_id or agent_id in {"conversation.home_assistant", "homeassistant"}:
-            continue
-        name = getattr(info, "name", None) or agent_id
-        options.append({"value": str(agent_id), "label": f"{name} — {agent_id}"})
-    return options
+    """Conversation entities other than the built-in agent, which cannot draw."""
+    return conversation_dropdown(hass)
 
 
 def _drift_name(discovery: BluetoothServiceInfoBleak) -> str | None:
@@ -87,8 +80,14 @@ class DriftOptionsFlow(OptionsFlow):
                     cleaned[key] = value.strip()
             return self.async_create_entry(title="", data=cleaned)
         current = self.config_entry.options
-        task_options = _ai_task_dropdown(self.hass)
-        agent_options = _conversation_agent_dropdown(self.hass)
+        try:
+            task_options = _ai_task_dropdown(self.hass)
+        except Exception:
+            task_options = []
+        try:
+            agent_options = _conversation_agent_dropdown(self.hass)
+        except Exception:
+            agent_options = []
         schema: dict[Any, Any] = {
             vol.Required(
                 CONF_CLEAN_BEFORE_AI,
