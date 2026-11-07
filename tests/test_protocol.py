@@ -40,7 +40,9 @@ from custom_components.homedics_drift.protocol import (
     parse_light_mode_echo,
     reconcile_lamp,
     reconcile_power,
+    PowerQueue,
     playback_allowed,
+    shown_playback,
     normalize_advertised_name,
     resolved_lamp_level,
     pattern_label,
@@ -49,6 +51,7 @@ from custom_components.homedics_drift.protocol import (
     percent_to_speed_raw,
     next_pattern,
     play_pause,
+    power,
     previous_pattern,
     random_mode,
     reply_for,
@@ -477,11 +480,54 @@ def _nul(text: str) -> bytes:
     return text.encode("ascii") + b"\x00"
 
 
-def test_soft_power_off_blocks_playback_until_the_table_echoes_it() -> None:
-    asleep = PowerHold(on=False)
-    assert reconcile_power(True, asleep) == (False, asleep)
-    assert reconcile_power(False, asleep) == (False, None)
-    assert reconcile_power(None, asleep) == (False, asleep)
+def test_power_command_is_absolute_on_or_off() -> None:
+    off = power(False)
+    on = power(True)
+    assert off.data == bytes((16, 0))
+    assert on.data == bytes((16, 1))
+    assert off.command == 0x14
+    assert on.command == 0x14
+    # Play/pause is a different action. Power never sends that toggle.
+    assert play_pause().data == bytes((3,))
+    assert off.data != play_pause().data
+    assert on.data != play_pause().data
+
+
+def test_power_switch_follows_the_table_and_a_disagreement_corrects_it() -> None:
+    assert reconcile_power(True, None) == (True, None)
+    assert reconcile_power(False, None) == (False, None)
+    # Still queued: a status that has not seen the command does not undo it.
+    queued = PowerHold(on=False, sent=False)
+    assert reconcile_power(True, queued) == (False, queued)
+    sent_off = PowerHold(on=False, sent=True)
+    assert reconcile_power(False, sent_off) == (False, None)
+    # The table stayed on. The switch must show on, not stick at the command.
+    assert reconcile_power(True, sent_off) == (True, None)
+    sent_on = PowerHold(on=True, sent=True)
+    assert reconcile_power(True, sent_on) == (True, None)
+    assert reconcile_power(False, sent_on) == (False, None)
+    assert reconcile_power(None, sent_off) == (False, sent_off)
+    assert reconcile_power(None, None) == (None, None)
+
+
+def test_rapid_power_flips_collapse_to_the_last_absolute_value() -> None:
+    queue = PowerQueue()
+    queue.push(False)
+    queue.push(True)
+    queue.push(False)
+    assert queue.pop() is False
+    assert queue.pop() is None
+    queue.push(True)
+    queue.push(True)
+    assert queue.pop() is True
+
+
+def test_player_follows_soft_power() -> None:
+    assert shown_playback(False, True) == "off"
+    assert shown_playback(False, False) == "off"
+    assert shown_playback(True, True) == "playing"
+    assert shown_playback(True, False) == "paused"
+    assert shown_playback(None, True) == "playing"
     assert playback_allowed(False) is False
     assert playback_allowed(True) is True
     assert playback_allowed(None) is True

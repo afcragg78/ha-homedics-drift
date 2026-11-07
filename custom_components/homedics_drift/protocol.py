@@ -310,8 +310,13 @@ def current_time(moment: datetime | None = None) -> Packet:
 
 
 def power(on: bool) -> Packet:
+    """Absolute soft power, command ``0x14/16``.
+
+    ``1`` is on and ``0`` is off. This is not a toggle: the byte is the state
+    to set, and sending the same value again does not flip the table.
+    """
     writer = _packet(CMD_ACTION, 16)
-    writer.boolean(on)
+    writer.boolean(bool(on))
     return _finish(CMD_ACTION, writer)
 
 
@@ -515,25 +520,66 @@ def playback_allowed(power_on: bool | None) -> bool:
     return power_on is not False
 
 
+def shown_playback(power_on: bool | None, drawing: bool) -> str:
+    """Player state that stays consistent with the power switch.
+
+    Soft power off is off even if a status byte still says drawing. Unknown
+    power follows the drawing byte, so a missing flag does not force off.
+    """
+    if power_on is False:
+        return "off"
+    if drawing:
+        return "playing"
+    return "paused"
+
+
 @dataclass(frozen=True, slots=True)
 class PowerHold:
-    """Soft-power command waiting for the table to echo ``powerOn``."""
+    """Absolute on/off waiting to be confirmed by ``powerOn``.
+
+    ``sent`` is false while the write is still queued. Status from that window
+    must not undo the switch. Once the byte is on the wire, the next report
+    confirms a match or replaces the switch when the table disagrees.
+    """
 
     on: bool
+    sent: bool = False
 
 
 def reconcile_power(
     reported: bool | None, hold: PowerHold | None
 ) -> tuple[bool | None, PowerHold | None]:
-    """Keep ``0x14/16`` until the running-state flag agrees with it.
+    """Follow the table's ``powerOn`` flag after the command has been sent.
 
-    A stale ``powerOn`` true after sleep must not flip the switch back on.
+    A report that matches clears the wait. A report that disagrees becomes
+    the switch state, so a missed command cannot leave Home Assistant inverted.
     """
-    if hold is None:
-        return reported, None
-    if reported is hold.on:
-        return reported, None
-    return hold.on, hold
+    if hold is not None and not hold.sent:
+        return hold.on, hold
+    if reported is None:
+        if hold is None:
+            return None, None
+        return hold.on, hold
+    return reported, None
+
+
+@dataclass(slots=True)
+class PowerQueue:
+    """Collapse rapid on/off requests to the latest absolute value.
+
+    Each ``push`` replaces whatever was waiting. ``pop`` returns that one
+    value, so a burst of flips becomes a single ``0x14/16`` write.
+    """
+
+    pending: bool | None = None
+
+    def push(self, on: bool) -> None:
+        self.pending = bool(on)
+
+    def pop(self) -> bool | None:
+        value = self.pending
+        self.pending = None
+        return value
 
 
 def draw_pattern(pattern_id: int) -> Packet:

@@ -14,7 +14,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .coordinator import DriftConfigEntry, DriftCoordinator
 from .entity import DriftEntity
-from .protocol import playback_allowed
+from .protocol import playback_allowed, shown_playback
 
 
 async def async_setup_entry(
@@ -66,9 +66,10 @@ class DriftPlayer(DriftEntity, MediaPlayerEntity):
         data = self.coordinator.data
         if data is None:
             return None
-        if data.power_on is False:
+        activity = shown_playback(data.power_on, data.drawing)
+        if activity == "off":
             return MediaPlayerState.OFF
-        if data.playback == "playing":
+        if activity == "playing":
             return MediaPlayerState.PLAYING
         return MediaPlayerState.PAUSED
 

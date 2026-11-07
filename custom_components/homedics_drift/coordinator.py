@@ -26,6 +26,7 @@ from .const import (
     BACKOFF_START,
     DOMAIN,
     NOTIFY_UUID,
+    POWER_DEBOUNCE,
     READY_TIMEOUT,
     WRITE_UUID,
 )
@@ -53,6 +54,7 @@ from .protocol import (
     speed_raw,
     Packet,
     PacketParser,
+    PowerQueue,
     percent_to_speed_raw,
     playback_allowed,
     reconcile_power,
@@ -93,6 +95,8 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         self.lamp_color_name = "Temp"
         self._lamp_hold: LampHold | None = None
         self._power_hold: PowerHold | None = None
+        self._power_queue = PowerQueue()
+        self._power_worker: asyncio.Task[None] | None = None
         self._client: BleakClientWithServiceCache | None = None
         self._device: BLEDevice | None = None
         self._parser = PacketParser()
@@ -122,10 +126,13 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         self._ready.set()
         task = self._task
         self._task = None
-        if task is not None and task is not asyncio.current_task() and not task.done():
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+        power_worker = self._power_worker
+        self._power_worker = None
+        for job in (task, power_worker):
+            if job is not None and job is not asyncio.current_task() and not job.done():
+                job.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await job
         await self._disconnect_client()
         await super().async_shutdown()
 
@@ -366,14 +373,43 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         self.async_set_updated_data(state)
 
     async def async_set_power(self, on: bool) -> None:
-        """Soft sleep or wake, command ``0x14/16``. This is not a mains plug.
+        """Soft sleep or wake with an absolute ``0x14/16`` value.
 
-        Off is held until the table reports ``powerOn`` false, so a stale
-        status packet cannot show the switch on while the table is asleep.
+        ``True`` sends 1 and ``False`` sends 0. Rapid flips are collapsed to
+        the last value and written one at a time. The switch shows that value
+        until the table reports ``powerOn``; a different report wins.
         """
-        await self.async_send(power(on))
-        self._power_hold = PowerHold(on)
-        self._replace(power_on=on)
+        requested = bool(on)
+        self._power_queue.push(requested)
+        self._power_hold = PowerHold(requested)
+        self._replace(power_on=requested)
+        worker = self._power_worker
+        if worker is None or worker.done():
+            self._power_worker = self.hass.async_create_task(
+                self._drain_power(),
+                name=f"{DOMAIN}-power-{self.address}",
+            )
+
+    async def _drain_power(self) -> None:
+        """Write the latest absolute power value, then any value that arrived later."""
+        while not self._shut_down:
+            try:
+                await asyncio.sleep(POWER_DEBOUNCE)
+                target = self._power_queue.pop()
+                if target is None:
+                    return
+                await self.async_send(power(target))
+                # A newer request replaces the hold before this write returns.
+                if self._power_hold is not None and self._power_hold.on is target:
+                    self._power_hold = PowerHold(target, sent=True)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                _LOGGER.debug("Drift power command was not written", exc_info=True)
+                if self._power_queue.pending is None:
+                    self._power_hold = None
+                    self._publish()
+                    return
 
     async def async_toggle_playback(self) -> None:
         """Send the protocol's play/pause toggle."""
