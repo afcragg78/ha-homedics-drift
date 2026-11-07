@@ -627,6 +627,18 @@ class DriftState:
         return self.status == 1
 
     @property
+    def playback(self) -> str:
+        """``playing`` while the table reports drawing, otherwise ``paused``.
+
+        This does not look at power. Callers must tolerate a missing state:
+        Home Assistant reads media-player properties even when the entity is
+        still unavailable.
+        """
+        if self.status == 1:
+            return "playing"
+        return "paused"
+
+    @property
     def speed_percent(self) -> float:
         return speed_raw_to_percent(self.speed_raw)
 

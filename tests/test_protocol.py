@@ -50,6 +50,7 @@ from custom_components.homedics_drift.protocol import (
     speed_percent,
     start_upload,
     Kind,
+    DriftState,
 )
 
 FIXTURE = Path(__file__).parent / "fixtures" / "protocol.json"
@@ -463,6 +464,15 @@ def test_named_palette_colour_is_reselected_when_the_lamp_comes_on() -> None:
 
 def _nul(text: str) -> bytes:
     return text.encode("ascii") + b"\x00"
+
+
+def test_playback_comes_from_drawing_status_without_requiring_power() -> None:
+    drawing = DriftState(status=1, power_on=True, pattern_id=12, playlist_id="1666040602046")
+    idle = DriftState(status=0, power_on=False, pattern_id=0, playlist_id="")
+    assert drawing.playback == "playing"
+    assert idle.playback == "paused"
+    # A missing power flag must not be treated as "no player".
+    assert DriftState(status=1, power_on=None).playback == "playing"
 
 
 def test_stale_on_status_does_not_undo_lamp_off() -> None:
