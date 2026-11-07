@@ -1,12 +1,6 @@
 {
   "domain": "homedics_drift",
   "name": "HoMedics Drift",
-  "bluetooth": [
-    {
-      "connectable": true,
-      "local_name": "KS*"
-    }
-  ],
   "codeowners": ["@afcragg78"],
   "config_flow": true,
   "dependencies": ["bluetooth"],
