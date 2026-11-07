@@ -14,6 +14,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .coordinator import DriftConfigEntry, DriftCoordinator
 from .entity import DriftEntity
+from .protocol import playback_allowed
 
 
 async def async_setup_entry(
@@ -61,10 +62,12 @@ class DriftPlayer(DriftEntity, MediaPlayerEntity):
 
     @property
     def state(self) -> MediaPlayerState | None:
-        """Playing or paused from the drawing status. None until the first report."""
+        """Playing or paused from the drawing status. Off while soft power is off."""
         data = self.coordinator.data
         if data is None:
             return None
+        if data.power_on is False:
+            return MediaPlayerState.OFF
         if data.playback == "playing":
             return MediaPlayerState.PLAYING
         return MediaPlayerState.PAUSED
@@ -85,45 +88,50 @@ class DriftPlayer(DriftEntity, MediaPlayerEntity):
             return None
         return data.playlist_id or None
 
+    def _asleep(self) -> bool:
+        data = self.coordinator.data
+        return data is not None and not playback_allowed(data.power_on)
+
     @override
     async def async_turn_on(self) -> None:
-        """Power the table on and start playback when it is idle."""
-        data = self.coordinator.data
-        if data is None:
-            return
-        if data.power_on is False:
-            await self.coordinator.async_set_power(True)
-        if not data.drawing:
-            await self.coordinator.async_toggle_playback()
+        """Wake soft sleep. The power switch follows. Playback stays stopped."""
+        await self.coordinator.async_set_power(True)
 
     @override
     async def async_media_play(self) -> None:
-        """Start drawing unless it is already drawing."""
-        await self.async_turn_on()
+        """Start drawing unless the table is asleep or already drawing."""
+        if self._asleep():
+            return
+        data = self.coordinator.data
+        if data is not None and not data.drawing:
+            await self.coordinator.async_toggle_playback()
 
     @override
     async def async_media_pause(self) -> None:
-        """Pause when the ball is drawing. The toggle is not sent while idle."""
+        """Pause when the ball is drawing. Ignored while soft power is off."""
+        if self._asleep():
+            return
         data = self.coordinator.data
         if data is not None and data.drawing:
             await self.coordinator.async_toggle_playback()
 
     @override
     async def async_media_play_pause(self) -> None:
-        """Send the table's play/pause toggle, powering on first if needed."""
-        data = self.coordinator.data
-        if data is None:
+        """Send the play/pause toggle. Ignored while soft power is off."""
+        if self._asleep():
             return
-        if data.power_on is False:
-            await self.coordinator.async_set_power(True)
         await self.coordinator.async_toggle_playback()
 
     @override
     async def async_media_next_track(self) -> None:
-        """Skip to the next pattern."""
+        """Skip to the next pattern. Ignored while soft power is off."""
+        if self._asleep():
+            return
         await self.coordinator.async_next()
 
     @override
     async def async_media_previous_track(self) -> None:
-        """Skip to the previous pattern."""
+        """Skip to the previous pattern. Ignored while soft power is off."""
+        if self._asleep():
+            return
         await self.coordinator.async_previous()
