@@ -21,6 +21,9 @@
       },
       "pattern": {
         "default": "mdi:palette-outline"
+      },
+      "inbox": {
+        "default": "mdi:file-import"
       }
     },
     "sensor": {
@@ -35,6 +38,22 @@
       },
       "now_playing": {
         "default": "mdi:draw"
+      },
+      "slots": {
+        "default": "mdi:database"
+      }
+    },
+    "button": {
+      "refresh_patterns": {
+        "default": "mdi:folder-refresh"
+      },
+      "upload_folder_pattern": {
+        "default": "mdi:upload"
+      }
+    },
+    "image": {
+      "preview": {
+        "default": "mdi:image"
       }
     },
     "switch": {

@@ -1,0 +1,324 @@
+"""Pattern files, ids, and upload planning.
+
+Josh Lannin's Drifted project (https://github.com/joshlannin/drifted) defined
+the wire points and the upload recovery rules. This Home Assistant integration
+was converted from Drifted using Grok Bot. Names live only on this computer;
+the table stores ids.
+"""
+
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass, field
+from pathlib import Path
+
+USER_ID_MIN = 50000
+STORAGE_CAP = 700
+MAX_POINTS = 24_000
+PAGE_SIZE = 40
+
+class PatternRejected(Exception):
+    """A pattern cannot be sent or deleted. The table is left unchanged."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
+
+
+def parse_thr(text: str) -> list[tuple[float, float]]:
+    """Read a Sandify ``.thr`` file: theta in radians, rho 0..1.
+
+    Blank lines and ``#`` comments are skipped. Commas and spaces both separate
+    the two numbers.
+    """
+    points: list[tuple[float, float]] = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.replace(",", " ").split()
+        if len(parts) < 2:
+            raise PatternRejected(f"could not read a theta,rho pair from {line!r}")
+        try:
+            theta = float(parts[0])
+            rho = float(parts[1])
+        except ValueError as err:
+            raise PatternRejected(f"could not read a theta,rho pair from {line!r}") from err
+        points.append((theta, max(0.0, min(1.0, rho))))
+    return points
+
+
+def densify(points: list[tuple[float, float]], max_step: float = 0.01) -> list[tuple[float, float]]:
+    """Insert points so a Sandify path does not jump across the table.
+
+    This matches Drifted's polar densify: step length is estimated in radii,
+    and each original segment is split until the steps are about ``max_step``.
+    """
+    if not points:
+        return []
+    out = [points[0]]
+    prev_theta, prev_rho = points[0]
+    for theta, rho in points[1:]:
+        distance = math.hypot(rho - prev_rho, (theta - prev_theta) * max(rho, prev_rho))
+        steps = max(1, math.ceil(distance / max_step - 1e-12))
+        for index in range(1, steps + 1):
+            fraction = index / steps
+            out.append(
+                (
+                    prev_theta + (theta - prev_theta) * fraction,
+                    prev_rho + (rho - prev_rho) * fraction,
+                )
+            )
+        prev_theta, prev_rho = theta, rho
+    return out
+
+
+def wire_point(theta: float, rho: float) -> tuple[int, int]:
+    """Convert one polar point the way Drifted does.
+
+    ``t`` is millidegrees divided by 6. ``r`` is rho on 0..100000, then divided
+    by 2, so the rim is 50000.
+    """
+    milli = int(round(theta * 180.0 / math.pi * 1000.0)) % 360_000
+    if milli < 0:
+        milli += 360_000
+    rho_file = int(round(max(0.0, min(1.0, rho)) * 100_000))
+    return milli // 6, rho_file // 2
+
+
+def thr_to_wire(text: str) -> list[tuple[int, int]]:
+    """Parse, densify, and convert a ``.thr`` document to wire points."""
+    polar = densify(parse_thr(text))
+    if not polar:
+        raise PatternRejected("the pattern file has no points")
+    if len(polar) > MAX_POINTS:
+        raise PatternRejected(
+            f"the pattern has {len(polar)} points; the limit is {MAX_POINTS}"
+        )
+    return [wire_point(theta, rho) for theta, rho in polar]
+
+
+def paginate(points: list[tuple[int, int]], page_size: int = PAGE_SIZE) -> list[list[tuple[int, int]]]:
+    """Split wire points into pages of 40. The last page may be shorter."""
+    if not points:
+        raise PatternRejected("the pattern file has no points")
+    return [points[index : index + page_size] for index in range(0, len(points), page_size)]
+
+
+def resend_indexes(page_count: int, missing: list[int], attempt: int) -> list[int]:
+    """0-based pages to send again after ``0x34/1``.
+
+    An empty missing list means the trailing pages were lost. Grow the tail
+    that is resent. A non-empty list is the 1-based pages the table asked for.
+    """
+    if not missing:
+        tail = min(page_count, 3 * attempt)
+        return list(range(page_count - tail, page_count))
+    indexes: list[int] = []
+    for page in missing:
+        index = page - 1
+        if 0 <= index < page_count and index not in indexes:
+            indexes.append(index)
+    if not indexes:
+        raise PatternRejected("the table asked for pages that are not in this pattern")
+    return indexes
+
+
+def allocate_id(
+    stored: set[int],
+    *,
+    playing: int | None,
+    reuse: int | None,
+) -> int:
+    """Pick an id at or above 50000.
+
+    Stock ids are never returned. The id that is drawing is never returned.
+    A new id is refused once the table already holds ``STORAGE_CAP`` patterns.
+    Reusing the id already saved for this name does not spend another slot.
+    """
+    active = playing if playing and playing > 0 else None
+    if reuse is not None:
+        if reuse < USER_ID_MIN:
+            raise PatternRejected("refusing to replace a pattern that came with the table")
+        if active is not None and reuse == active:
+            raise PatternRejected("that pattern is drawing; wait until it is finished")
+        return reuse
+    if len(stored) >= STORAGE_CAP:
+        raise PatternRejected(
+            f"the table already stores {len(stored)} patterns; the limit is {STORAGE_CAP}"
+        )
+    candidate = USER_ID_MIN
+    while candidate in stored or candidate == active:
+        candidate += 1
+        if candidate > 65535:
+            raise PatternRejected("no free pattern id is left")
+    return candidate
+
+
+def slots(stored_count: int) -> tuple[int, int]:
+    """Used count and how many new patterns are still allowed."""
+    used = max(0, stored_count)
+    return used, max(0, STORAGE_CAP - used)
+
+
+def deletion_refusal(pattern_id: int, *, stored: set[int], playing: int | None, uploaded: set[int]) -> str | None:
+    """Why a delete must not be sent, or None when it is safe."""
+    if pattern_id < USER_ID_MIN or pattern_id not in uploaded:
+        return "only a pattern uploaded from Home Assistant can be deleted"
+    if playing and pattern_id == playing:
+        return "that pattern is drawing; wait until it is finished"
+    if pattern_id not in stored:
+        return "the table did not list that pattern, so it was not deleted"
+    return None
+
+
+def path_under_config(config_dir: Path, raw: str) -> Path:
+    """Resolve a pattern path and require it to stay inside the config folder."""
+    root = config_dir.expanduser().resolve()
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = root / path
+    path = path.resolve()
+    if not path.is_relative_to(root):
+        raise PatternRejected("the pattern path has to stay inside the Home Assistant config folder")
+    if path.suffix.lower() != ".thr":
+        raise PatternRejected("the pattern file must be a .thr file")
+    return path
+
+
+def label_patterns(pattern_ids: list[int], names: dict[int, str]) -> list[tuple[str, int]]:
+    """Display names in id order. Duplicate names gain the id so both can be picked."""
+    ordered = sorted(pattern_id for pattern_id in pattern_ids if pattern_id > 0)
+    bases = [names.get(pattern_id) or f"Pattern {pattern_id}" for pattern_id in ordered]
+    counts: dict[str, int] = {}
+    for base in bases:
+        counts[base] = counts.get(base, 0) + 1
+    seen: dict[str, int] = {}
+    labeled: list[tuple[str, int]] = []
+    for pattern_id, base in zip(ordered, bases, strict=True):
+        if counts[base] == 1:
+            label = base
+        else:
+            seen[base] = seen.get(base, 0) + 1
+            label = f"{base} ({pattern_id})"
+        labeled.append((label, pattern_id))
+    return labeled
+
+
+@dataclass
+class PatternRecord:
+    """One uploaded pattern remembered on this Home Assistant machine."""
+
+    pattern_id: int
+    name: str
+    thr: str
+    source: str = ""
+
+
+@dataclass
+class PatternLibrary:
+    """Local names and uploaded files. The table itself has no names."""
+
+    records: dict[int, PatternRecord] = field(default_factory=dict)
+    aliases: dict[int, str] = field(default_factory=dict)
+
+    def name_for(self, pattern_id: int) -> str | None:
+        alias = self.aliases.get(pattern_id)
+        if alias:
+            return alias
+        record = self.records.get(pattern_id)
+        if record is not None:
+            return record.name
+        return None
+
+    def names(self) -> dict[int, str]:
+        found = {record.pattern_id: record.name for record in self.records.values()}
+        found.update({pattern_id: name for pattern_id, name in self.aliases.items() if name})
+        return found
+
+    def uploaded_ids(self) -> set[int]:
+        return set(self.records)
+
+    def id_for_upload_name(self, name: str) -> int | None:
+        for record in self.records.values():
+            if record.name == name:
+                return record.pattern_id
+        return None
+
+    def remember(self, pattern_id: int, name: str, thr: str, source: str = "") -> None:
+        self.records[pattern_id] = PatternRecord(pattern_id, name, thr, source)
+        self.aliases[pattern_id] = name
+
+    def rename(self, pattern_id: int, name: str) -> None:
+        """Store a display name. This does not write the table."""
+        cleaned = name.strip()
+        if not cleaned:
+            raise PatternRejected("the pattern needs a name")
+        if pattern_id <= 0:
+            raise PatternRejected("that is not a pattern id")
+        self.aliases[pattern_id] = cleaned
+        record = self.records.get(pattern_id)
+        if record is not None:
+            record.name = cleaned
+
+    def forget(self, pattern_id: int) -> None:
+        self.records.pop(pattern_id, None)
+        self.aliases.pop(pattern_id, None)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "records": [
+                {
+                    "id": record.pattern_id,
+                    "name": record.name,
+                    "thr": record.thr,
+                    "source": record.source,
+                }
+                for record in self.records.values()
+            ],
+            "aliases": {str(pattern_id): name for pattern_id, name in self.aliases.items()},
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, object] | None) -> PatternLibrary:
+        library = cls()
+        if not data:
+            return library
+        records = data.get("records")
+        if isinstance(records, list):
+            for item in records:
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    pattern_id = int(item["id"])
+                    name = str(item["name"])
+                    thr = str(item.get("thr") or "")
+                    source = str(item.get("source") or "")
+                except (KeyError, TypeError, ValueError):
+                    continue
+                if pattern_id >= USER_ID_MIN and name:
+                    library.records[pattern_id] = PatternRecord(pattern_id, name, thr, source)
+        aliases = data.get("aliases")
+        if isinstance(aliases, dict):
+            for key, value in aliases.items():
+                try:
+                    pattern_id = int(key)
+                except (TypeError, ValueError):
+                    continue
+                if isinstance(value, str) and value.strip():
+                    library.aliases[pattern_id] = value.strip()
+        return library
+
+
+def inbox_names(filenames: list[str], library: PatternLibrary) -> list[str]:
+    """``.thr`` files in the folder that have not been uploaded yet."""
+    used = {record.source for record in library.records.values() if record.source}
+    used.update(record.name + ".thr" for record in library.records.values())
+    found: list[str] = []
+    for name in sorted(filenames):
+        if not name.lower().endswith(".thr"):
+            continue
+        if name in used:
+            continue
+        found.append(name)
+    return found

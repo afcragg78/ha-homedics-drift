@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 from bleak.backends.device import BLEDevice
@@ -19,6 +21,8 @@ from homeassistant.components import bluetooth
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import (
@@ -30,6 +34,20 @@ from .const import (
     READY_TIMEOUT,
     WRITE_UUID,
 )
+from .patterns import (
+    STORAGE_CAP,
+    PatternLibrary,
+    PatternRejected,
+    allocate_id,
+    deletion_refusal,
+    inbox_names,
+    label_patterns,
+    paginate,
+    path_under_config,
+    resend_indexes,
+    thr_to_wire,
+)
+from .preview import render_thr
 from .protocol import (
     CMD_PLAYLIST_LIST,
     DriftState,
@@ -40,15 +58,19 @@ from .protocol import (
     PlaylistCatalogue,
     alarm_text,
     brightness,
+    delete_patterns,
     draw_pattern,
     draw_playlist,
+    end_upload,
     fixed_color,
     lamp_on_packets,
     reconcile_lamp,
     next_pattern,
+    pattern_page,
     play_pause,
     previous_pattern,
     session_actions,
+    start_upload,
     reply_for,
     speed_raw,
     Packet,
@@ -99,6 +121,15 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         self._off_enforced = False
         self._power_queue = PowerQueue()
         self._power_worker: asyncio.Task[None] | None = None
+        self._command_lock = asyncio.Lock()
+        self._notices: asyncio.Queue[Message] = asyncio.Queue()
+        self.library = PatternLibrary()
+        self._library_store = Store(hass, 1, f"{DOMAIN}_{self.address.replace(':', '')}_patterns")
+        self.inbox: list[str] = []
+        self.inbox_choice: str | None = None
+        self.preview_at: datetime | None = None
+        self._inbox_unsub: Any = None
+        self._seen_pattern_id: int | None = None
         self._client: BleakClientWithServiceCache | None = None
         self._device: BLEDevice | None = None
         self._parser = PacketParser()
@@ -117,6 +148,10 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
             self._run(),
             name=f"{DOMAIN}-{self.address}",
         )
+        self._inbox_unsub = async_track_time_interval(
+            self.hass, self._scan_inbox, timedelta(seconds=120)
+        )
+        self.hass.async_create_task(self._scan_inbox(None), name=f"{DOMAIN}-inbox-{self.address}")
 
     async def async_shutdown(self) -> None:
         """Cancel reconnects and drop the GATT connection."""
@@ -130,6 +165,9 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         self._task = None
         power_worker = self._power_worker
         self._power_worker = None
+        if self._inbox_unsub is not None:
+            self._inbox_unsub()
+            self._inbox_unsub = None
         for job in (task, power_worker):
             if job is not None and job is not asyncio.current_task() and not job.done():
                 job.cancel()
@@ -258,8 +296,20 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
             self._publish()
             self._enforce_saved_off()
             return
+        if message.kind in (
+            Kind.UPLOAD_MISSING,
+            Kind.UPLOAD_STARTED,
+            Kind.UPLOAD_STORED,
+            Kind.UPLOAD_FAILED,
+            Kind.DELETE_COMPLETE,
+            Kind.NO_STORAGE,
+        ):
+            self._notices.put_nowait(message)
         if message.kind is Kind.STATE and message.state is not None:
             self._apply_lamp_report(message.state, message.state.brightness)
+            if message.state.pattern_id != self._seen_pattern_id:
+                self._seen_pattern_id = message.state.pattern_id
+                self.preview_at = datetime.now(timezone.utc)
             self.async_set_updated_data(message.state)
             return
         if message.kind is Kind.LIGHT_MODE and message.light_brightness is not None:
@@ -443,10 +493,11 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
                 self.session_on = target
                 self.session_settled = False
                 self._publish()
-                if target:
-                    await self._session_on()
-                else:
-                    await self._session_off()
+                async with self._command_lock:
+                    if target:
+                        await self._session_on()
+                    else:
+                        await self._session_off()
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -464,14 +515,14 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
                 await self.async_send(play_pause())
                 self._replace(status=0)
             elif action == "light_off":
-                await self.async_set_brightness(0)
+                await self._set_brightness(0)
 
     async def _session_on(self) -> None:
         """Restore the remembered lamp, then resume play if the ball is idle."""
         drawing = bool(self.data and self.data.drawing)
         for action in session_actions(True, drawing=drawing):
             if action == "light_on":
-                await self.async_turn_lamp_on(max(1, self.lamp_brightness))
+                await self._turn_lamp_on(max(1, self.lamp_brightness))
             elif action == "resume":
                 if self.data is None or not self.data.drawing:
                     await self.async_send(play_pause())
@@ -479,29 +530,37 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
 
     async def async_toggle_playback(self) -> None:
         """Send play/pause. This does not change the power switch."""
-        if not playback_allowed(self.session_on):
-            return
-        drawing = bool(self.data and self.data.drawing)
-        await self.async_send(play_pause())
-        self._replace(status=0 if drawing else 1)
+        async with self._command_lock:
+            if not playback_allowed(self.session_on):
+                return
+            drawing = bool(self.data and self.data.drawing)
+            await self.async_send(play_pause())
+            self._replace(status=0 if drawing else 1)
 
     async def async_next(self) -> None:
-        if not playback_allowed(self.session_on):
-            return
-        await self.async_send(next_pattern())
+        async with self._command_lock:
+            if not playback_allowed(self.session_on):
+                return
+            await self.async_send(next_pattern())
 
     async def async_previous(self) -> None:
-        if not playback_allowed(self.session_on):
-            return
-        await self.async_send(previous_pattern())
+        async with self._command_lock:
+            if not playback_allowed(self.session_on):
+                return
+            await self.async_send(previous_pattern())
 
     async def async_set_speed_percent(self, percent: float) -> None:
-        raw = percent_to_speed_raw(percent)
-        await self.async_send(speed_raw(raw))
-        self._replace(speed_raw=raw)
+        async with self._command_lock:
+            raw = percent_to_speed_raw(percent)
+            await self.async_send(speed_raw(raw))
+            self._replace(speed_raw=raw)
 
     async def async_set_brightness(self, level: int) -> None:
         """Dim with ``0x14/7``. Zero is what turns the ST-300 lamp off."""
+        async with self._command_lock:
+            await self._set_brightness(level)
+
+    async def _set_brightness(self, level: int) -> None:
         level = max(0, min(100, int(level)))
         await self.async_send(brightness(level))
         if level > 0:
@@ -513,6 +572,11 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         self._replace(brightness=0, lamp_on=False)
 
     async def async_turn_lamp_on(self, level: int) -> None:
+        """Turn the lamp on with ``0x11/4`` and, from off, the last colour."""
+        async with self._command_lock:
+            await self._turn_lamp_on(level)
+
+    async def _turn_lamp_on(self, level: int) -> None:
         """Turn the lamp on with ``0x11/4`` and, from off, the last colour.
 
         The toggle is updated as soon as the write finishes. A status packet
@@ -551,6 +615,10 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
 
     async def async_set_color(self, rgb: tuple[int, int, int], level: int) -> None:
         """Store a fixed colour as palette entry Temp so it survives disconnect."""
+        async with self._command_lock:
+            await self._set_color(rgb, level)
+
+    async def _set_color(self, rgb: tuple[int, int, int], level: int) -> None:
         level = max(1, min(100, int(level)))
         red, green, blue = (max(0, min(255, int(channel))) for channel in rgb)
         for packet in fixed_color(red, green, blue, level):
@@ -576,6 +644,10 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
 
     async def async_select_playlist(self, label: str) -> None:
         """Draw the playlist the table reported under ``label``."""
+        async with self._command_lock:
+            await self._select_playlist(label)
+
+    async def _select_playlist(self, label: str) -> None:
         self._require_awake()
         playlist = self.catalogue.by_label(label)
         if playlist is None:
@@ -595,13 +667,280 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         self._replace(**changes)
 
     async def async_select_pattern(self, label: str) -> None:
-        """Play one stored pattern by the label ``Pattern N`` (command ``0x14/1``)."""
-        self._require_awake()
-        pattern_id = self.patterns.by_label(label)
-        if pattern_id is None:
-            raise HomeAssistantError(f"Unknown Drift pattern: {label}")
-        await self.async_send(draw_pattern(pattern_id))
-        self._replace(pattern_id=pattern_id, status=1)
+        """Play one stored pattern. This does not change the power switch."""
+        async with self._command_lock:
+            self._require_awake()
+            pattern_id = None
+            for choice, stored in self.pattern_choices():
+                if choice == label:
+                    pattern_id = stored
+                    break
+            if pattern_id is None:
+                raise HomeAssistantError(f"Unknown Drift pattern: {label}")
+            await self.async_send(draw_pattern(pattern_id))
+            self._replace(pattern_id=pattern_id, status=1)
+
+    async def async_load_library(self) -> None:
+        """Read names and uploaded patterns saved on this machine."""
+        stored = await self._library_store.async_load()
+        self.library = PatternLibrary.from_dict(stored if isinstance(stored, dict) else None)
+
+    async def _save_library(self) -> None:
+        await self._library_store.async_save(self.library.to_dict())
+
+    def pattern_folder(self) -> Path:
+        return Path(self.hass.config.path("drift_patterns"))
+
+    def _preview_path(self, pattern_id: int) -> Path:
+        slug = self.address.replace(":", "")
+        return self.pattern_folder() / "previews" / f"{slug}-{pattern_id}.png"
+
+    def pattern_choices(self) -> list[tuple[str, int]]:
+        """Pattern select labels, including names saved on this machine."""
+        ids = list(self.patterns.pattern_ids)
+        for extra in self.library.uploaded_ids():
+            if extra not in ids:
+                ids.append(extra)
+        return label_patterns(ids, self.library.names())
+
+    def display_name(self, pattern_id: int) -> str | None:
+        """Name for one id. Idle (0) has none."""
+        if pattern_id <= 0:
+            return None
+        for label, stored in self.pattern_choices():
+            if stored == pattern_id:
+                return label
+        return self.library.name_for(pattern_id) or f"Pattern {pattern_id}"
+
+    def slot_counts(self) -> tuple[int, int]:
+        used = len(self.patterns.pattern_ids)
+        return used, max(0, STORAGE_CAP - used)
+
+    async def async_refresh_inbox(self) -> None:
+        """Look again for .thr files. This does not upload them."""
+        await self._scan_inbox(None)
+
+    async def _scan_inbox(self, _now: datetime | None = None) -> None:
+        """List .thr files that have not been uploaded. This does not upload them."""
+        folder = self.pattern_folder()
+
+        def _names() -> list[str]:
+            folder.mkdir(parents=True, exist_ok=True)
+            (folder / "previews").mkdir(parents=True, exist_ok=True)
+            if not folder.is_dir():
+                return []
+            return [item.name for item in folder.iterdir() if item.is_file()]
+
+        try:
+            names = await self.hass.async_add_executor_job(_names)
+        except OSError:
+            _LOGGER.debug("Drift pattern folder could not be read", exc_info=True)
+            return
+        self.inbox = inbox_names(names, self.library)
+        if self.inbox_choice not in self.inbox:
+            self.inbox_choice = self.inbox[0] if self.inbox else None
+        self._publish()
+
+    async def async_upload_inbox(self) -> None:
+        """Upload the folder file the user picked. Nothing uploads until this runs."""
+        choice = self.inbox_choice
+        if not choice:
+            raise HomeAssistantError("No .thr file is waiting in the pattern folder")
+        path = self.pattern_folder() / choice
+        name = path.stem
+        await self.async_upload_pattern(name=name, path=str(path), source=choice)
+
+    async def async_upload_pattern(
+        self, *, name: str, path: str | None = None, thr: str | None = None, source: str = ""
+    ) -> int:
+        """Store a new pattern. Success is only the table's stored message."""
+        cleaned = name.strip()
+        if not cleaned:
+            raise HomeAssistantError("The pattern needs a name")
+        if path and thr:
+            raise HomeAssistantError("Give a file path or the pattern text, not both")
+        if path:
+            try:
+                file_path = path_under_config(Path(self.hass.config.path()), path)
+            except PatternRejected as err:
+                raise HomeAssistantError(err.message) from err
+            if not file_path.is_file():
+                raise HomeAssistantError("That pattern file was not found")
+
+            def _read() -> str:
+                return file_path.read_text(encoding="utf-8")
+
+            text = await self.hass.async_add_executor_job(_read)
+            source = source or file_path.name
+        elif thr and thr.strip():
+            text = thr
+        else:
+            raise HomeAssistantError("Give a .thr file path or the pattern text")
+        try:
+            polar_count_text = text
+            wire = thr_to_wire(polar_count_text)
+            pages = paginate(wire)
+        except PatternRejected as err:
+            raise HomeAssistantError(err.message) from err
+        async with self._command_lock:
+            playing = self.data.pattern_id if self.data is not None else None
+            try:
+                pattern_id = allocate_id(
+                    set(self.patterns.pattern_ids),
+                    playing=playing,
+                    reuse=self.library.id_for_upload_name(cleaned),
+                )
+            except PatternRejected as err:
+                raise HomeAssistantError(err.message) from err
+            await self._transfer(pattern_id, pages)
+            preview = self._preview_path(pattern_id)
+            try:
+                png = await self.hass.async_add_executor_job(render_thr, text)
+
+                def _write() -> None:
+                    preview.parent.mkdir(parents=True, exist_ok=True)
+                    preview.write_bytes(png)
+
+                await self.hass.async_add_executor_job(_write)
+            except Exception:
+                _LOGGER.warning("Drift preview was not saved for pattern %s", pattern_id, exc_info=True)
+            self.library.remember(pattern_id, cleaned, text, source)
+            await self._save_library()
+            self.preview_at = datetime.now(timezone.utc)
+            self._publish()
+            await self._scan_inbox(None)
+            return pattern_id
+
+    async def _transfer(self, pattern_id: int, pages: list[list[tuple[int, int]]]) -> None:
+        """Send start, pages, and end. Only ``0x34/3`` is success.
+
+        If the transfer stops after start, one end packet is sent so the table
+        can close the file instead of sitting in an open upload.
+        """
+        started = False
+        stored = False
+        ended = False
+        try:
+            self._drain_notices()
+            for attempt in range(1, 4):
+                await self.async_send(start_upload(pattern_id, len(pages)))
+                try:
+                    message = await self._wait_notice(
+                        4.0,
+                        lambda notice: notice.kind
+                        in (Kind.UPLOAD_STARTED, Kind.UPLOAD_FAILED, Kind.NO_STORAGE)
+                        and notice.pattern_id == pattern_id,
+                    )
+                except TimeoutError:
+                    if attempt == 3:
+                        raise HomeAssistantError("The table did not start the upload") from None
+                    continue
+                if message.kind is Kind.UPLOAD_FAILED:
+                    raise HomeAssistantError("The table rejected the upload")
+                if message.kind is Kind.NO_STORAGE:
+                    raise HomeAssistantError("The table has no room for another pattern")
+                started = True
+                break
+            pending = list(range(len(pages)))
+            delay = 0.1
+            for attempt in range(1, 7):
+                for index in pending:
+                    await self.async_send(pattern_page(index + 1, pages[index]))
+                    await asyncio.sleep(delay)
+                await asyncio.sleep(delay)
+                await self.async_send(end_upload(pattern_id, len(pages)))
+                ended = True
+                message = await self._wait_notice(
+                    15.0,
+                    lambda notice: (
+                        notice.kind in (Kind.UPLOAD_STORED, Kind.UPLOAD_FAILED, Kind.NO_STORAGE)
+                        and notice.pattern_id == pattern_id
+                    )
+                    or notice.kind is Kind.UPLOAD_MISSING,
+                )
+                if message.kind is Kind.UPLOAD_STORED:
+                    stored = True
+                    return
+                if message.kind is Kind.UPLOAD_FAILED:
+                    raise HomeAssistantError("The table rejected the pattern")
+                if message.kind is Kind.NO_STORAGE:
+                    raise HomeAssistantError("The table has no room for another pattern")
+                pending = resend_indexes(len(pages), list(message.pages or []), attempt)
+                delay = 0.2
+            raise HomeAssistantError("The table did not confirm the pattern was stored")
+        finally:
+            if started and not stored and not ended:
+                with contextlib.suppress(Exception):
+                    await self.async_send(end_upload(pattern_id, len(pages)))
+
+    def _drain_notices(self) -> None:
+        while not self._notices.empty():
+            self._notices.get_nowait()
+
+    async def _wait_notice(self, timeout: float, predicate: Any) -> Message:
+        deadline = asyncio.get_running_loop().time() + timeout
+        while True:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                raise TimeoutError
+            notice = await asyncio.wait_for(self._notices.get(), remaining)
+            if predicate(notice):
+                return notice
+
+    async def async_delete_pattern(self, *, pattern_id: int | None = None, name: str | None = None) -> None:
+        """Delete one pattern this integration uploaded, never a stock id or the one drawing."""
+        async with self._command_lock:
+            target = pattern_id
+            if target is None and name:
+                target = self.library.id_for_upload_name(name.strip())
+            if target is None:
+                raise HomeAssistantError("Name the uploaded pattern to delete")
+            playing = self.data.pattern_id if self.data is not None else None
+            reason = deletion_refusal(
+                target,
+                stored=set(self.patterns.pattern_ids),
+                playing=playing,
+                uploaded=self.library.uploaded_ids(),
+            )
+            if reason is not None:
+                raise HomeAssistantError(reason)
+            self._drain_notices()
+            await self.async_send(delete_patterns([target]))
+            try:
+                await self._wait_notice(
+                    8.0,
+                    lambda notice: notice.kind is Kind.DELETE_COMPLETE and notice.pattern_id == target,
+                )
+            except TimeoutError as err:
+                raise HomeAssistantError("The table did not confirm the delete") from err
+            self.library.forget(target)
+            preview = self._preview_path(target)
+            with contextlib.suppress(OSError):
+                await self.hass.async_add_executor_job(preview.unlink, True)
+            await self._save_library()
+            self.preview_at = datetime.now(timezone.utc)
+            self._publish()
+
+    async def async_rename_pattern(self, pattern_id: int, name: str) -> None:
+        """Remember a display name. Nothing is sent to the table."""
+        try:
+            self.library.rename(pattern_id, name)
+        except PatternRejected as err:
+            raise HomeAssistantError(err.message) from err
+        await self._save_library()
+        self._publish()
+
+    def preview_bytes(self) -> bytes | None:
+        """PNG for the pattern that is on now, when this machine has one."""
+        if self.data is None or self.data.pattern_id <= 0:
+            return None
+        path = self._preview_path(self.data.pattern_id)
+        if not path.is_file():
+            return None
+        try:
+            return path.read_bytes()
+        except OSError:
+            return None
 
     async def _async_update_data(self) -> DriftState:
         if self.data is None:

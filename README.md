@@ -86,8 +86,13 @@ One device per table. Entity names are prefixed with the table's Bluetooth name.
 | `media_player` Player | Available whenever the table is connected. While Power is off it stays off and offers no play, pause, next, previous, or source button. While Power is on it shows playing or paused, with those transport buttons and no power button of its own. |
 | `number` Speed | 0–100%. The table's raw speed byte runs from 30 to 75 (`30 + percent/100 × 45`). 0% is raw 30 and 100% is raw 75, which is what the HoMedics app calls full speed. |
 | `select` Playlist | Every playlist the table itself sends during the session dump (`0x30`, actions 1–4), refreshed on each connection. A human name in the packet is shown. Numeric ids, including the app's millisecond timestamps, stay behind the command and are labeled `Playlist N`. Choosing one sends draw-from-playlist (`0x14/2`) with that id and the first pattern id in the list, or pattern 0 when the table did not include pattern ids. Nothing is hardcoded. Ignored while soft power is off. |
-| `select` Pattern | Every pattern id the table lists (`0x33`), refreshed from the handshake dump and again whenever the table resends that list. The table does not store titles, so each one is `Pattern N`. Choosing one plays that id (`0x14/1`). Ignored while soft power is off. |
-| `sensor` Now Playing | The current pattern as `Pattern N`, or Idle when the table reports pattern 0. Attributes: playlist name (never a raw timestamp), 1-based index in that playlist when the id is in it, progress percent, pattern id, and `stored_patterns` (every stored label). |
+| `select` Pattern | Every pattern id the table lists. A name saved by upload or rename is shown; otherwise `Pattern N`. Choosing one plays that id. Ignored while Power is off. |
+| `select` Folder pattern | `.thr` files in `/config/drift_patterns` that have not been uploaded. Choosing one does not upload it. |
+| `button` Upload folder pattern | Uploads the file chosen in Folder pattern. |
+| `button` Refresh pattern folder | Looks again for new `.thr` files. Does not upload them. |
+| `image` Now Playing preview | A sand picture of the current pattern, when that pattern was uploaded from here. |
+| `sensor` Pattern slots | How many patterns the table has stored, and how many new ones are still allowed under the cap of 700. |
+| `sensor` Now Playing | The current pattern name, or Idle when the table reports pattern 0. Attributes: playlist name, 1-based index in that playlist when the id is in it, progress percent, pattern id, and `stored_patterns`. |
 | `sensor` Status | `drawing` or `idle` from the running-state status byte. Attributes include colour name, playlist id, random, loop, sleep, breathing, shifting, and the controller and driver versions. |
 | `sensor` Progress | Pattern progress. The wire value 0–10000 is shown as 0–100%. It does not advance while the ball travels to a pattern's first point, and it can still read 100% for a moment after the next pattern starts. |
 | `sensor` Pattern id | Numeric pattern id currently reported by the table. Idle is often id 0. |
@@ -96,9 +101,31 @@ State is pushed by the table about twice a second (`0x35/1`). The integration an
 
 If the table is unplugged or walks out of range, the entities become unavailable. The integration reconnects with backoff (2 seconds, doubling, capped at 60 seconds) and becomes available again after the next handshake. Notifications and writes are asynchronous and do not block Home Assistant's event loop.
 
+## Drawing a new pattern
+
+The table does not store names or pictures. Home Assistant keeps those.
+
+1. Open [Sandify](https://sandify.org) and draw a pattern.
+2. Export it as a `.thr` file (theta in radians, rho from 0 at the centre to 1 at the rim).
+3. Copy the file to `/config/drift_patterns/` on the Home Assistant machine. The folder is created for you.
+4. Press **Refresh pattern folder**, choose the file under **Folder pattern**, then press **Upload folder pattern**. Dropping the file in the folder does not upload it.
+5. Or call the service `homedics_drift.upload_pattern` with a name and either `path` (`/config/drift_patterns/spiral.thr`) or the raw `thr` text.
+
+The upload uses a new id at or above 50000. It will not replace a pattern that shipped with the table, and it will not replace the pattern that is drawing. Pages of 40 points go out about 100 ms apart. The pattern is kept only when the table says it was stored (`0x34/3`). If the link drops in the middle, the table throws away the partial file after a few seconds and stays usable.
+
+New uploads stop when the table already lists 700 patterns, which is under its limit of about 800. **Pattern slots** shows how many are used and how many are free.
+
+`homedics_drift.delete_pattern` deletes only an id this integration uploaded (50000 or above), and not the one that is drawing.
+
+`homedics_drift.rename_pattern` changes the name shown in **Pattern** for any id, including a stock one. That name stays on this Home Assistant machine. The table is not told.
+
+**Now Playing preview** shows a sand picture of the current pattern when that pattern was uploaded here.
+
+An upload holds the Bluetooth connection until it finishes, so power, play, and a second upload wait their turn instead of cutting the page stream. Power, light, pause, and play themselves are unchanged.
+
 ## What this integration does not do
 
-- It does not upload sand patterns. The codec can build upload packets, and the tests check them against Drifted's vectors, but there is no upload service. Drifted can store a new drawing: start (`0x13/1` with an id and a page count), pages of 40 polar points (`0x53/1`), then end (`0x13/2`). The only success signal is `0x34/3`. There is no name field, so a new drawing is still just an id (use 50000 and up). The table does not send the path back; `0x53` is upload only, so this integration does not expose theta/rho for a preview.
+- The table does not send a stored pattern's path back, so a preview exists only for a pattern uploaded from this Home Assistant machine. Stock patterns can be renamed for the select, but they have no picture until you upload a file of your own.
 - It never sends firmware update commands (`0x15`) or the reserved reset (`0x14/12`).
 - It does not write playlist definitions (`0x10`). Those commands replace playlists stored on the table. The select only reads the `0x30` list the table sends after connect.
 - The `0x30` payload is documented as strings and 16-bit arrays, in the same page framing as colour pages and stored-pattern pages, but the exact layout is not spelled out byte for byte. The parser accepts a named page, an indexed page, a bare index list, or a name list, and it uses the first layout that consumes the packet. A playlist packet in some other layout is logged at debug and is not shown. If your table's list stays empty, that is the gap to report.
@@ -109,7 +136,7 @@ If the table is unplugged or walks out of range, the entities become unavailable
 ## Development
 
 ```bash
-python -m pip install pytest
+python -m pip install pytest pillow
 python -m pytest
 ```
 

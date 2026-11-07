@@ -40,6 +40,9 @@
       },
       "pattern": {
         "name": "Pattern"
+      },
+      "inbox": {
+        "name": "Folder pattern"
       }
     },
     "sensor": {
@@ -59,11 +62,75 @@
       },
       "now_playing": {
         "name": "Now Playing"
+      },
+      "slots": {
+        "name": "Pattern slots"
       }
     },
     "switch": {
       "power": {
         "name": "Power"
+      }
+    },
+    "button": {
+      "refresh_patterns": {
+        "name": "Refresh pattern folder"
+      },
+      "upload_folder_pattern": {
+        "name": "Upload folder pattern"
+      }
+    },
+    "image": {
+      "preview": {
+        "name": "Now Playing preview"
+      }
+    }
+  },
+  "services": {
+    "upload_pattern": {
+      "name": "Upload pattern",
+      "description": "Store a Sandify .thr pattern on the table under a name.",
+      "fields": {
+        "name": {
+          "name": "Name",
+          "description": "Name to show in the Pattern select."
+        },
+        "path": {
+          "name": "File path",
+          "description": "Path under the config folder, such as /config/drift_patterns/spiral.thr."
+        },
+        "thr": {
+          "name": "Pattern text",
+          "description": "Theta-rho text, used when a file path is not given."
+        }
+      }
+    },
+    "delete_pattern": {
+      "name": "Delete pattern",
+      "description": "Delete a pattern uploaded from Home Assistant. Stock patterns and the one that is drawing are refused.",
+      "fields": {
+        "pattern_id": {
+          "name": "Pattern id",
+          "description": "Id at or above 50000."
+        },
+        "name": {
+          "name": "Name",
+          "description": "Name of an uploaded pattern."
+        }
+      }
+    },
+    "rename_pattern": {
+      "name": "Rename pattern",
+      "description": "Remember a display name for a pattern id, including a stock id. The table is not changed.",
+      "fields": {
+        "pattern_id": {
+          "name": "Pattern id",
+          "description": "Id reported by the table."
+        },
+        "name": {
+          "name": "Name",
+          "description": "Name to show in the Pattern select."
+        }
       }
     }
   }

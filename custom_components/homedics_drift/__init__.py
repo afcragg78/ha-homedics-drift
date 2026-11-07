@@ -9,6 +9,7 @@ this repository is not the author.
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
 from homeassistant.core import Event, HomeAssistant
@@ -18,6 +19,8 @@ from .coordinator import DriftConfigEntry, DriftCoordinator
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS: list[Platform] = [
+    Platform.BUTTON,
+    Platform.IMAGE,
     Platform.LIGHT,
     Platform.MEDIA_PLAYER,
     Platform.NUMBER,
@@ -27,9 +30,18 @@ PLATFORMS: list[Platform] = [
 ]
 
 
+async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
+    """Register pattern services once for every table."""
+    from .services import async_setup_services
+
+    await async_setup_services(hass)
+    return True
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: DriftConfigEntry) -> bool:
     """Connect to a Drift table and create its entities."""
     coordinator = DriftCoordinator(hass, entry)
+    await coordinator.async_load_library()
     entry.runtime_data = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 

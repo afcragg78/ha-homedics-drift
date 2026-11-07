@@ -28,6 +28,7 @@ async def async_setup_entry(
             DriftProgressSensor(coordinator),
             DriftPatternSensor(coordinator),
             DriftNowPlayingSensor(coordinator),
+            DriftSlotSensor(coordinator),
         ]
     )
 
@@ -133,7 +134,7 @@ class DriftNowPlayingSensor(DriftEntity, SensorEntity):
     @property
     def native_value(self) -> str:
         """Current pattern label, or Idle when the table reports pattern 0."""
-        label = self.coordinator.patterns.label_for(self._state.pattern_id)
+        label = self.coordinator.display_name(self._state.pattern_id)
         return label if label is not None else "Idle"
 
     @property
@@ -149,5 +150,30 @@ class DriftNowPlayingSensor(DriftEntity, SensorEntity):
             "pattern_id": state.pattern_id,
             "pattern_index": index,
             "progress": round(state.progress * 100, 2),
-            "stored_patterns": self.coordinator.patterns.names(),
+            "stored_patterns": [label for label, _pattern_id in self.coordinator.pattern_choices()],
         }
+
+
+class DriftSlotSensor(DriftEntity, SensorEntity):
+    """How many patterns the table has stored, and how many new ones are allowed."""
+
+    _attr_translation_key = "slots"
+    _attr_icon = "mdi:database"
+    _attr_state_class = SensorStateClass.MEASUREMENT
+
+    def __init__(self, coordinator: DriftCoordinator) -> None:
+        """Identify the sensor."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}-slots"
+
+    @property
+    def native_value(self) -> int:
+        """Patterns the table has listed."""
+        used, _free = self.coordinator.slot_counts()
+        return used
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        """Free slots under the cap, and files waiting in the folder."""
+        used, free = self.coordinator.slot_counts()
+        return {"used": used, "free": free, "cap": 700, "inbox": list(self.coordinator.inbox)}
