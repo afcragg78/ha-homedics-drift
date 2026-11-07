@@ -390,16 +390,22 @@ def light_mode(
 
 
 def fixed_color(red: int, green: int, blue: int, brightness_level: int) -> list[Packet]:
-    """Three-packet recipe that keeps a custom colour after disconnect."""
-    return lamp_on_packets(
-        level=brightness_level,
-        color=(red, green, blue),
-        color_name="Temp",
-        shifting=False,
-        shift_time=0,
-        breathing=False,
-        from_off=True,
-    )
+    """Drifted's colour recipe: preview, select ``Temp``, then light mode.
+
+    This is the order ``settingsPackets`` sends for a colour. Brightness here
+    is the persisted ``0x11/4`` value and is never zero when turning the lamp on.
+    """
+    level = max(1, min(100, int(brightness_level)))
+    return [
+        show_color(red, green, blue, enabled=True),
+        select_color("Temp"),
+        light_mode(
+            shifting=False,
+            shift_time=0,
+            breathing=False,
+            brightness_level=level,
+        ),
+    ]
 
 
 @dataclass(frozen=True, slots=True)
@@ -474,48 +480,60 @@ def lamp_on_packets(
     breathing: bool,
     from_off: bool,
 ) -> list[Packet]:
-    """Commands that turn the lamp on or change its persisted brightness.
+    """Turn the lamp on the way Drifted sets a brightness, then the live level.
 
-    ``0x14/7`` can dim the lamp to zero, and on a ST-300 it does not bring the
-    lamp back. Turning on resends the colour (``0x14/15`` then ``0x14/13``)
-    and light mode ``0x11/4`` with a non-zero brightness. A later brightness
-    change uses ``0x11/4`` as well, keeping the shifting and breathing flags.
+    Drifted's settings path persists brightness with ``0x11/4`` only. On this
+    table, off is ``0x14/7`` with value 0, and that live level stays 0 until
+    ``0x14/7`` is sent again with a non-zero value. There is no separate light
+    enable flag; ``0x14/15``'s enable byte only applies to a colour preview.
+    Coming back from off therefore sends Drifted's colour recipe (preview,
+    select ``Temp``, light mode at the restored brightness) and then ``0x14/7``
+    with that same non-zero brightness. ``color_name`` is unused here: a
+    palette name is not what relights the LEDs.
     """
+    del color_name  # palette name is not part of Drifted's turn-on sequence
     level = max(1, min(100, int(level)))
-    if not from_off:
-        return [
-            light_mode(
-                shifting=shifting,
-                shift_time=shift_time,
-                breathing=breathing,
-                brightness_level=level,
-            )
-        ]
     red, green, blue = color
-    name = color_name if color_name and not is_raw_playlist_id(color_name) else "Temp"
-    # 0x14/15 stores the colour as "Temp". Selecting that entry, then 0x11/4
-    # with shifting off, is what makes the colour stick. A named palette
-    # colour is selected as-is and keeps the previous light-mode flags.
-    if name == "Temp":
+    if from_off:
         return [
-            show_color(red, green, blue, enabled=True),
-            select_color("Temp"),
-            light_mode(
-                shifting=False,
-                shift_time=0,
-                breathing=False,
-                brightness_level=level,
-            ),
+            *fixed_color(red, green, blue, level),
+            brightness(level),
         ]
     return [
-        select_color(name),
         light_mode(
             shifting=shifting,
             shift_time=shift_time,
             breathing=breathing,
             brightness_level=level,
         ),
+        brightness(level),
     ]
+
+
+def playback_allowed(power_on: bool | None) -> bool:
+    """Play, pause, and skip are ignored while soft power is off."""
+    return power_on is not False
+
+
+@dataclass(frozen=True, slots=True)
+class PowerHold:
+    """Soft-power command waiting for the table to echo ``powerOn``."""
+
+    on: bool
+
+
+def reconcile_power(
+    reported: bool | None, hold: PowerHold | None
+) -> tuple[bool | None, PowerHold | None]:
+    """Keep ``0x14/16`` until the running-state flag agrees with it.
+
+    A stale ``powerOn`` true after sleep must not flip the switch back on.
+    """
+    if hold is None:
+        return reported, None
+    if reported is hold.on:
+        return reported, None
+    return hold.on, hold
 
 
 def draw_pattern(pattern_id: int) -> Packet:

@@ -32,10 +32,13 @@ from custom_components.homedics_drift.protocol import (
     is_drift_name,
     is_raw_playlist_id,
     LampHold,
+    PowerHold,
     lamp_on_packets,
     light_mode,
     parse_light_mode_echo,
     reconcile_lamp,
+    reconcile_power,
+    playback_allowed,
     normalize_advertised_name,
     resolved_lamp_level,
     pattern_page,
@@ -421,15 +424,15 @@ def test_turning_the_lamp_on_restores_colour_and_nonzero_brightness() -> None:
         breathing=True,
         from_off=True,
     )
-    assert len(packets) == 3
-    show, select, mode = packets
+    assert [packet.data[0] for packet in packets] == [0x0F, 13, 4, 7]
+    show, select, mode, live = packets
     assert show.data[:2] == bytes((0x0F, 0x01))
     assert show.data[2:5] == bytes((255, 255, 255))
-    assert select.data[0] == 13
     assert b"Temp\x00" in select.data
     assert mode.data[0] == 4
     assert mode.data[-1] == 100
-    assert all(packet.data[-1] != 0 for packet in packets if packet.data[0] == 4)
+    assert live.data == bytes((7, 100))
+    assert all(packet.data[-1] != 0 for packet in (mode, live))
 
 
 def test_brightness_change_while_on_uses_light_mode() -> None:
@@ -442,8 +445,10 @@ def test_brightness_change_while_on_uses_light_mode() -> None:
         breathing=False,
         from_off=False,
     )
-    assert len(packets) == 1
-    assert packets[0].data == bytes((4, 1, 12, 0, 0, 40))
+    assert [packet.data for packet in packets] == [
+        bytes((4, 1, 12, 0, 0, 40)),
+        bytes((7, 40)),
+    ]
 
 
 def test_named_palette_colour_is_reselected_when_the_lamp_comes_on() -> None:
@@ -456,14 +461,26 @@ def test_named_palette_colour_is_reselected_when_the_lamp_comes_on() -> None:
         breathing=False,
         from_off=True,
     )
-    assert [packet.data[0] for packet in packets] == [13, 4]
-    assert b"c0\x00" in packets[0].data
-    assert packets[1].data[-1] == 55
-    assert packets[1].data[1] == 1
+    assert [packet.data[0] for packet in packets] == [0x0F, 13, 4, 7]
+    assert packets[0].data[1] == 1
+    assert packets[0].data[2:5] == bytes((9, 8, 7))
+    assert b"Temp\x00" in packets[1].data
+    assert packets[2].data[-1] == 55
+    assert packets[3].data == bytes((7, 55))
 
 
 def _nul(text: str) -> bytes:
     return text.encode("ascii") + b"\x00"
+
+
+def test_soft_power_off_blocks_playback_until_the_table_echoes_it() -> None:
+    asleep = PowerHold(on=False)
+    assert reconcile_power(True, asleep) == (False, asleep)
+    assert reconcile_power(False, asleep) == (False, None)
+    assert reconcile_power(None, asleep) == (False, asleep)
+    assert playback_allowed(False) is False
+    assert playback_allowed(True) is True
+    assert playback_allowed(None) is True
 
 
 def test_playback_comes_from_drawing_status_without_requiring_power() -> None:

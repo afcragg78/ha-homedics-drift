@@ -35,6 +35,7 @@ from .protocol import (
     Kind,
     LampHold,
     Message,
+    PowerHold,
     PlaylistCatalogue,
     alarm_text,
     brightness,
@@ -51,6 +52,7 @@ from .protocol import (
     Packet,
     PacketParser,
     percent_to_speed_raw,
+    reconcile_power,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -86,6 +88,7 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         self.lamp_color: tuple[int, int, int] = (255, 255, 255)
         self.lamp_color_name = "Temp"
         self._lamp_hold: LampHold | None = None
+        self._power_hold: PowerHold | None = None
         self._client: BleakClientWithServiceCache | None = None
         self._device: BLEDevice | None = None
         self._parser = PacketParser()
@@ -240,6 +243,7 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
             return
         if message.kind is Kind.STATE and message.state is not None:
             self._apply_lamp_report(message.state, message.state.brightness)
+            self._apply_power_report(message.state)
             self.async_set_updated_data(message.state)
             return
         if message.kind is Kind.LIGHT_MODE and message.light_brightness is not None:
@@ -287,6 +291,11 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
             self.data.breathing = message.light_breathing
         self._apply_lamp_report(self.data, message.light_brightness)
         self.async_set_updated_data(self.data)
+
+    def _apply_power_report(self, state: DriftState) -> None:
+        """Keep soft sleep until the table echoes ``powerOn``."""
+        value, self._power_hold = reconcile_power(state.power_on, self._power_hold)
+        state.power_on = value
 
     def _publish(self) -> None:
         if self.data is not None:
@@ -351,8 +360,13 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         self.async_set_updated_data(state)
 
     async def async_set_power(self, on: bool) -> None:
-        """Soft power, command 0x14/16. This is not a mains plug."""
+        """Soft sleep or wake, command ``0x14/16``. This is not a mains plug.
+
+        Off is held until the table reports ``powerOn`` false, so a stale
+        status packet cannot show the switch on while the table is asleep.
+        """
         await self.async_send(power(on))
+        self._power_hold = PowerHold(on)
         self._replace(power_on=on)
 
     async def async_toggle_playback(self) -> None:
