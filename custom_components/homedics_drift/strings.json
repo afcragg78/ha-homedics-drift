@@ -15,7 +15,8 @@
       "already_configured": "This Drift table is already configured.",
       "already_in_progress": "This Drift table is already being configured.",
       "no_devices_found": "No HoMedics Drift tables were found. Plug the table in, bring a Bluetooth adapter or ESPHome proxy closer, and try again.",
-      "not_supported": "This Bluetooth device is not a HoMedics Drift table."
+      "not_supported": "This Bluetooth device is not a HoMedics Drift table.",
+      "no_ai": "No AI Task entities were found. Add an AI integration in Home Assistant, then open these options again."
     }
   },
   "entity": {
@@ -43,6 +44,12 @@
       },
       "inbox": {
         "name": "Folder pattern"
+      },
+      "gallery": {
+        "name": "Gallery design"
+      },
+      "favorites": {
+        "name": "Favorites"
       }
     },
     "sensor": {
@@ -76,6 +83,9 @@
       },
       "clean_before": {
         "name": "Clean before pattern"
+      },
+      "favorite": {
+        "name": "Favorite"
       }
     },
     "button": {
@@ -90,11 +100,20 @@
       },
       "draw_with_ai": {
         "name": "Draw with AI"
+      },
+      "send_gallery": {
+        "name": "Send gallery design"
+      },
+      "random_gallery": {
+        "name": "Random design"
       }
     },
     "image": {
       "preview": {
         "name": "Now Playing preview"
+      },
+      "gallery_preview": {
+        "name": "Gallery preview"
       }
     },
     "text": {
@@ -107,10 +126,11 @@
     "step": {
       "init": {
         "title": "AI drawing",
-        "description": "Optional. Choose the AI Task entity Home Assistant should use for one drawing. Leave both empty to use the default assistant when one is installed. No API key is stored here.",
+        "description": "Pick an AI Task from the list. Each row is the assistant's name and its entity id. Leave it empty to use Home Assistant's preferred AI Task, or the first one that is online. No API key is stored here.",
         "data": {
           "ai_task_entity": "AI Task entity",
-          "conversation_agent": "Conversation agent"
+          "conversation_agent": "Conversation agent",
+          "clean_before_ai": "Clean before AI drawings"
         }
       }
     }
@@ -247,6 +267,56 @@
         "pen": {
           "name": "Pen offset",
           "description": "Spirograph pen distance."
+        }
+      }
+    },
+    "add_gallery_design": {
+      "name": "Add gallery design",
+      "description": "Upload one of the built-in gallery designs by its name. Plays only while Power is on.",
+      "fields": {
+        "device_id": {
+          "name": "Table",
+          "description": "Drift table. Needed only when more than one table is set up."
+        },
+        "name": {
+          "name": "Name",
+          "description": "Gallery name, such as Lotus Mandala or Nebula Spiral."
+        },
+        "play": {
+          "name": "Play",
+          "description": "Start the design when Power is on."
+        }
+      }
+    },
+    "import_pattern_url": {
+      "name": "Import pattern link",
+      "description": "Download a .thr file or a zip of .thr files from an https link and upload the ones that fit. Nothing is stored in this integration ahead of time.",
+      "fields": {
+        "device_id": {
+          "name": "Table",
+          "description": "Drift table. Needed only when more than one table is set up."
+        },
+        "url": {
+          "name": "Link",
+          "description": "https link to a .thr file or a zip that contains .thr files."
+        }
+      }
+    },
+    "set_favorite": {
+      "name": "Set favorite",
+      "description": "Mark or unmark a design by name. Favorites show in the Favorites list.",
+      "fields": {
+        "device_id": {
+          "name": "Table",
+          "description": "Drift table. Needed only when more than one table is set up."
+        },
+        "name": {
+          "name": "Name",
+          "description": "Gallery or pattern name."
+        },
+        "favorite": {
+          "name": "Favorite",
+          "description": "Turn the heart on or off."
         }
       }
     }

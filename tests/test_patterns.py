@@ -142,6 +142,36 @@ def test_stock_clean_is_preferred_and_the_spiral_is_protected() -> None:
     assert PatternLibrary.from_dict(restored.to_dict()).clean_before is True
 
 
+def test_favorites_and_https_imports_are_local_rules() -> None:
+    from custom_components.homedics_drift.patterns import (
+        documents_from_download,
+        https_pattern_url,
+    )
+
+    library = PatternLibrary()
+    library.set_favorite("Lotus Mandala", True)
+    library.set_favorite("Lotus Mandala", False)
+    library.set_favorite("Nebula Spiral", True)
+    assert library.favorite_names() == ["Nebula Spiral"]
+    assert PatternLibrary.from_dict(library.to_dict()).favorite_names() == ["Nebula Spiral"]
+    assert https_pattern_url("https://example.com/a.thr").endswith("a.thr")
+    with pytest.raises(PatternRejected):
+        https_pattern_url("http://example.com/a.thr")
+    with pytest.raises(PatternRejected):
+        https_pattern_url("https://localhost/a.thr")
+    body = b"0 0\n1 0.5\n"
+    assert documents_from_download("https://example.com/lotus.thr", body)[0][0] == "lotus"
+    import io
+    import zipfile
+
+    packed = io.BytesIO()
+    with zipfile.ZipFile(packed, "w") as archive:
+        archive.writestr("pack/rose.thr", "0 0\n0.2 1\n")
+        archive.writestr("notes.txt", "hello")
+    docs = documents_from_download("pack.zip", packed.getvalue())
+    assert docs == [("rose", "0 0\n0.2 1\n")]
+
+
 def test_preview_is_a_png() -> None:
     pytest.importorskip("PIL")
     from custom_components.homedics_drift.preview import render_thr

@@ -16,6 +16,116 @@ from .patterns import PatternRejected, densify, wire_point
 _FENCE = re.compile(r"```(?:json|svg)?\s*|```", re.IGNORECASE)
 
 
+DEFAULT_CONVERSATION_AGENTS = frozenset(
+    {"conversation.home_assistant", "homeassistant"}
+)
+_UNAVAILABLE = "unavailable"
+
+
+def choose_drawing_assistant(
+    *,
+    configured_task: str | None,
+    configured_agent: str | None,
+    preferred_task: str | None,
+    task_states: list[tuple[str, str]],
+    agents: list[tuple[str, str]],
+) -> tuple[str, str]:
+    """Pick an explicit AI Task entity or a non-default conversation agent.
+
+    The AI Task service errors if no entity is passed and Home Assistant has
+    no preferred one. Order: the entity saved in options, then Home Assistant's
+    preferred AI Task, then the first AI Task that is not unavailable, then a
+    conversation agent other than the built-in Home Assistant agent.
+    """
+    saved_task = (configured_task or "").strip() or None
+    saved_agent = (configured_agent or "").strip() or None
+    if saved_task:
+        return ("ai_task", saved_task)
+
+    available = [
+        entity_id
+        for entity_id, state in task_states
+        if entity_id and state != _UNAVAILABLE
+    ]
+    if preferred_task and preferred_task in available:
+        return ("ai_task", preferred_task)
+    if available:
+        return ("ai_task", sorted(available)[0])
+
+    extra_agents = [
+        agent_id
+        for agent_id, _name in agents
+        if agent_id and agent_id not in DEFAULT_CONVERSATION_AGENTS
+    ]
+    if saved_agent and saved_agent not in DEFAULT_CONVERSATION_AGENTS:
+        return ("conversation", saved_agent)
+    if extra_agents:
+        return ("conversation", extra_agents[0])
+    raise PatternRejected(
+        "No AI Task is available. Add an AI integration such as OpenAI or Google, "
+        "then pick it in this integration's options. The built-in Home Assistant "
+        "conversation agent cannot draw a pattern."
+    )
+
+
+class UploadTicks:
+    """Percent marks to announce, about every 10 points."""
+
+    def __init__(self) -> None:
+        self._last = 0
+
+    def crossed(self, done: int, total: int) -> list[int]:
+        if total <= 0 or done <= 0:
+            return []
+        value = min(100, int(done * 100 / total))
+        marks: list[int] = []
+        mark = self._last + 10
+        while mark <= value:
+            marks.append(mark)
+            mark += 10
+        if marks:
+            self._last = marks[-1]
+        return marks
+
+
+def clean_before_ai_drawing(option: object, *, play: bool, power_on: bool) -> bool:
+    """AI drawings wipe first when Power is on, unless the option is turned off.
+
+    A missing option means on. The separate Clean before pattern switch is ignored.
+    """
+    if not play or not power_on:
+        return False
+    if option is False or option == "false":
+        return False
+    return True
+
+
+def feedback_text(
+    stage: str,
+    *,
+    prompt: str = "",
+    assistant: str = "",
+    percent: int | None = None,
+    name: str = "",
+    playing: bool = False,
+    error: str = "",
+) -> str:
+    """The sentence shown for one stage of a drawing or gallery send."""
+    if stage == "drawing":
+        return f'Drawing "{prompt}" with {assistant}…'
+    if stage == "cleaning":
+        return "Cleaning sand…"
+    if stage == "uploading":
+        return f"Uploading to table… {percent}%"
+    if stage == "done":
+        if playing:
+            return f"Done: {name} saved and playing"
+        return f"Done: {name} saved"
+    if stage == "busy":
+        return "A drawing is already in progress."
+    return error or "The drawing failed"
+
+
 def build_instructions(prompt: str) -> str:
     """One request for a single path. Callers send this once."""
     subject = " ".join(prompt.split())

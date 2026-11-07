@@ -24,6 +24,12 @@
       },
       "inbox": {
         "default": "mdi:file-import"
+      },
+      "gallery": {
+        "default": "mdi:image-filter-vintage"
+      },
+      "favorites": {
+        "default": "mdi:heart"
       }
     },
     "sensor": {
@@ -58,6 +64,12 @@
       },
       "draw_with_ai": {
         "default": "mdi:draw"
+      },
+      "send_gallery": {
+        "default": "mdi:send"
+      },
+      "random_gallery": {
+        "default": "mdi:shuffle-variant"
       }
     },
     "text": {
@@ -68,6 +80,9 @@
     "image": {
       "preview": {
         "default": "mdi:image"
+      },
+      "gallery_preview": {
+        "default": "mdi:image-filter-vintage"
       }
     },
     "switch": {
@@ -76,6 +91,9 @@
       },
       "clean_before": {
         "default": "mdi:broom"
+      },
+      "favorite": {
+        "default": "mdi:heart"
       }
     }
   }

@@ -16,6 +16,9 @@ SERVICE_DELETE = "delete_pattern"
 SERVICE_RENAME = "rename_pattern"
 SERVICE_AI_DRAW = "ai_draw"
 SERVICE_GENERATE = "generate_pattern"
+SERVICE_GALLERY = "add_gallery_design"
+SERVICE_IMPORT = "import_pattern_url"
+SERVICE_FAVORITE = "set_favorite"
 
 _UPLOAD_SCHEMA = vol.Schema(
     {
@@ -43,6 +46,24 @@ _AI_SCHEMA = vol.Schema(
     {
         vol.Required("prompt"): cv.string,
         vol.Optional("name"): cv.string,
+        vol.Optional("play", default=False): cv.boolean,
+    },
+    extra=vol.ALLOW_EXTRA,
+)
+_IMPORT_SCHEMA = vol.Schema(
+    {vol.Required("url"): cv.string},
+    extra=vol.ALLOW_EXTRA,
+)
+_FAVORITE_SCHEMA = vol.Schema(
+    {
+        vol.Required("name"): cv.string,
+        vol.Optional("favorite", default=True): cv.boolean,
+    },
+    extra=vol.ALLOW_EXTRA,
+)
+_GALLERY_SCHEMA = vol.Schema(
+    {
+        vol.Required("name"): cv.string,
         vol.Optional("play", default=False): cv.boolean,
     },
     extra=vol.ALLOW_EXTRA,
@@ -116,7 +137,25 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     hass.services.async_register(DOMAIN, SERVICE_DELETE, _delete, schema=_DELETE_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_RENAME, _rename, schema=_RENAME_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_AI_DRAW, _ai_draw, schema=_AI_SCHEMA)
+    async def _gallery(call: ServiceCall) -> None:
+        coordinator = await _coordinator(hass, call)
+        await coordinator.async_add_gallery_design(
+            call.data["name"],
+            play=bool(call.data.get("play")),
+        )
+
     hass.services.async_register(DOMAIN, SERVICE_GENERATE, _generate, schema=_GENERATE_SCHEMA)
+    async def _import(call: ServiceCall) -> None:
+        coordinator = await _coordinator(hass, call)
+        await coordinator.async_import_pattern_url(call.data["url"])
+
+    async def _favorite(call: ServiceCall) -> None:
+        coordinator = await _coordinator(hass, call)
+        await coordinator.async_set_favorite(call.data["name"], bool(call.data.get("favorite", True)))
+
+    hass.services.async_register(DOMAIN, SERVICE_GALLERY, _gallery, schema=_GALLERY_SCHEMA)
+    hass.services.async_register(DOMAIN, SERVICE_IMPORT, _import, schema=_IMPORT_SCHEMA)
+    hass.services.async_register(DOMAIN, SERVICE_FAVORITE, _favorite, schema=_FAVORITE_SCHEMA)
 
 
 async def _coordinator(hass: HomeAssistant, call: ServiceCall) -> DriftCoordinator:

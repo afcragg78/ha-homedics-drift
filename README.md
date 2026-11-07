@@ -144,7 +144,7 @@ data:
 
 `type` is `spiral`, `rose`, `star`, `wave`, or `spirograph`. Spiral takes `turns` (1–40). Star takes `points` (3–12). Wave takes `waves`. Spirograph takes `outer`, `inner`, `pen`, and `loops`. `play: true` starts it only while Power is on. If Power is off the pattern is still saved, and it is not played.
 
-**A prompt** uses the assistant you already set up in Home Assistant. This integration does not store an API key. Open the integration options and pick an AI Task entity. If you leave that empty, the default AI Task is used when one is installed. If there is no AI Task, a conversation agent is used instead, and you can pick which agent in the same options. Each drawing is a single request. If you have neither, **Draw with AI** stays unavailable.
+**A prompt** uses the assistant you already set up in Home Assistant. This integration does not store an API key. Open the integration options and pick an AI Task from the dropdown. Each row shows the assistant's name and its entity id. If you leave it empty, Home Assistant's preferred AI Task is used, or the first AI Task that is online. If none of those exist, an extra conversation agent is used. The built-in Home Assistant agent cannot draw. Each drawing is a single request. If nothing can draw, **Draw with AI** stays unavailable and the error says so. When Power is on, an AI drawing wipes the sand first and then plays. That does not follow the **Clean before pattern** switch. Turn off **Clean before AI drawings** in the integration options if you do not want the wipe. The notification says `Cleaning sand…` during that step.
 
 Type the prompt in the **AI prompt** text box, then press **Draw with AI**. Or call the service:
 
@@ -156,7 +156,82 @@ data:
   play: true
 ```
 
-The assistant is asked for one list of `[x, y]` points inside a circle. Those points are resampled, kept inside the disc, started at the centre, finished on the rim, and turned into a `.thr` path. If the answer is not a path, nothing is uploaded and **AI drawing** shows the error. The same sensor shows `running` while the request is in flight and `stored` when the table has accepted the pattern.
+The assistant is asked for one list of `[x, y]` points inside a circle. Those points are resampled, kept inside the disc, started at the centre, finished on the rim, and turned into a `.thr` path. If the answer is not a path, nothing is uploaded and **AI drawing** shows the error. The same sensor shows `running` while the request is in flight, a `progress` percentage while the pattern is uploading, and `stored` when the table has accepted it. A second press while one is running is ignored and a notice says a drawing is already in progress.
+
+A notification on the Home Assistant dashboard updates through the same stages for **Draw with AI**, **Send gallery design**, and **Random design**: drawing (AI only), uploading percent about every 10%, then done or the failure reason. You can also listen for the event and send it to your phone:
+
+```yaml
+alias: Drift drawing status
+triggers:
+  - trigger: event
+    event_type: homedics_drift_ai_status
+actions:
+  - action: notify.mobile_app_YOUR_PHONE
+    data:
+      message: "{{ trigger.event.data.message }}"
+```
+
+`trigger.event.data.stage` is `drawing`, `uploading`, `done`, or `error`. `trigger.event.data.progress` is the percent while uploading.
+
+## Gallery
+
+Thirty-eight intricate designs are built into the integration. They are generated in code, not downloaded. Each path is one continuous line from the centre to the rim: layered mandalas, spirograph weaves, fractional roses, Lissajous figures, decaying harmonographs, galaxies, Chladni-style bands, wave rings, fern curls, and long sweeping arcs.
+
+Pick one in **Gallery design**. The row picture and **Gallery preview** show that design. Nothing is sent until you press **Send gallery design** or call:
+
+```yaml
+action: homedics_drift.add_gallery_design
+data:
+  name: Lotus Mandala
+  play: true
+```
+
+`play: true` starts it only while Power is on. **Random design** uploads a new variation of one of those designs. The same seed always repeats; each press uses a new seed.
+
+![Gallery contact sheet](docs/gallery-contact-sheet.png)
+
+You do not need to edit a dashboard. On the table's device page: pick a picture under **Gallery design**, turn on **Favorite** if you want it again, then press **Send gallery design**. Later, choose it from **Favorites**.
+
+If you want a wall of pictures, add a dashboard card and paste this. Change `YOUR_TABLE` to the start of the picture entity names you see on the device (each gallery name has its own picture). Tapping a picture sends that design and plays it when Power is on.
+
+```yaml
+type: grid
+columns: 2
+square: false
+cards:
+  - type: picture-entity
+    entity: image.YOUR_TABLE_lotus_mandala
+    name: Lotus Mandala
+    show_state: false
+    tap_action:
+      action: perform-action
+      perform_action: homedics_drift.add_gallery_design
+      target: {}
+      data:
+        name: Lotus Mandala
+        play: true
+  - type: picture-entity
+    entity: image.YOUR_TABLE_nebula_spiral
+    name: Nebula Spiral
+    show_state: false
+    tap_action:
+      action: perform-action
+      perform_action: homedics_drift.add_gallery_design
+      target: {}
+      data:
+        name: Nebula Spiral
+        play: true
+```
+
+Copy a block for any other name in the gallery. The picture entities are created for you.
+
+### Patterns from other people
+
+This integration does not include anyone else's pattern files.
+
+[Sandify Patterns](https://github.com/jeffeb3/sandify-patterns) by Jeff Eberl is MIT licensed (Copyright 2020 Jeff Eberl). It contains `.thr` files. You may import one with `homedics_drift.import_pattern_url` and an `https` link to a single `.thr` file or a zip of them. Files that are too long for the table are skipped. Several files in that repository are millions of points and will be refused. The MIT notice has to stay with those files if you share them again.
+
+Sisyphus tracks, Reddit posts, and other forum packs are the author's own copyright unless they say MIT, CC, or public domain. Do not import those. Sandify's own site says the same thing. We are not lawyers.
 
 ## What this integration does not do
 

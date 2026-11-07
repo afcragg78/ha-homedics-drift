@@ -7,6 +7,10 @@ import math
 import pytest
 
 from custom_components.homedics_drift.drawing import (
+    UploadTicks,
+    choose_drawing_assistant,
+    clean_before_ai_drawing,
+    feedback_text,
     generated_thr,
     generate_points,
     model_text,
@@ -20,6 +24,89 @@ from custom_components.homedics_drift.patterns import PatternRejected, parse_thr
 def _ends(text: str) -> tuple[float, float]:
     points = parse_thr(text)
     return points[0][1], points[-1][1]
+
+
+def test_ai_task_is_always_named_when_options_are_empty() -> None:
+    tasks = [
+        ("ai_task.openai", "unavailable"),
+        ("ai_task.google", "idle"),
+    ]
+    agents = [
+        ("conversation.home_assistant", "Home Assistant"),
+        ("conversation.openai", "OpenAI"),
+    ]
+    assert choose_drawing_assistant(
+        configured_task=None,
+        configured_agent=None,
+        preferred_task="ai_task.google",
+        task_states=tasks,
+        agents=agents,
+    ) == ("ai_task", "ai_task.google")
+    assert choose_drawing_assistant(
+        configured_task=None,
+        configured_agent=None,
+        preferred_task=None,
+        task_states=tasks,
+        agents=agents,
+    ) == ("ai_task", "ai_task.google")
+    assert choose_drawing_assistant(
+        configured_task="ai_task.custom",
+        configured_agent=None,
+        preferred_task="ai_task.google",
+        task_states=tasks,
+        agents=agents,
+    ) == ("ai_task", "ai_task.custom")
+    assert choose_drawing_assistant(
+        configured_task=None,
+        configured_agent=None,
+        preferred_task="ai_task.openai",
+        task_states=tasks,
+        agents=agents,
+    ) == ("ai_task", "ai_task.google")
+    assert choose_drawing_assistant(
+        configured_task=None,
+        configured_agent=None,
+        preferred_task="ai_task.openai",
+        task_states=[("ai_task.openai", "unavailable")],
+        agents=agents,
+    ) == ("conversation", "conversation.openai")
+    with pytest.raises(PatternRejected, match="No AI Task is available"):
+        choose_drawing_assistant(
+            configured_task=None,
+            configured_agent="conversation.home_assistant",
+            preferred_task=None,
+            task_states=[],
+            agents=[("conversation.home_assistant", "Home Assistant")],
+        )
+
+
+def test_ai_drawings_clean_first_only_while_power_is_on() -> None:
+    assert clean_before_ai_drawing(None, play=True, power_on=True) is True
+    assert clean_before_ai_drawing(True, play=True, power_on=True) is True
+    assert clean_before_ai_drawing(False, play=True, power_on=True) is False
+    assert clean_before_ai_drawing(True, play=True, power_on=False) is False
+    assert clean_before_ai_drawing(True, play=False, power_on=True) is False
+    assert feedback_text("cleaning") == "Cleaning sand…"
+
+
+def test_upload_feedback_steps_about_every_ten_percent() -> None:
+    ticks = UploadTicks()
+    notes: list[int] = []
+    for done in range(1, 11):
+        notes.extend(ticks.crossed(done, 10))
+    assert notes == [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
+    assert feedback_text("drawing", prompt="a star", assistant="OpenAI") == (
+        'Drawing "a star" with OpenAI…'
+    )
+    assert feedback_text("uploading", percent=20) == "Uploading to table… 20%"
+    assert feedback_text("done", name="Lotus Mandala", playing=True) == (
+        "Done: Lotus Mandala saved and playing"
+    )
+    assert feedback_text("done", name="Lotus Mandala") == "Done: Lotus Mandala saved"
+    assert feedback_text("busy") == "A drawing is already in progress."
+    assert feedback_text("error", error="The table rejected the upload") == (
+        "The table rejected the upload"
+    )
 
 
 def test_model_json_becomes_a_valid_centre_to_rim_path() -> None:
