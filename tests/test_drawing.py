@@ -7,7 +7,9 @@ import math
 import pytest
 
 from custom_components.homedics_drift.drawing import (
+    UploadTicks,
     choose_drawing_assistant,
+    feedback_text,
     generated_thr,
     generate_points,
     model_text,
@@ -75,6 +77,26 @@ def test_ai_task_is_always_named_when_options_are_empty() -> None:
             task_states=[],
             agents=[("conversation.home_assistant", "Home Assistant")],
         )
+
+
+def test_upload_feedback_steps_about_every_ten_percent() -> None:
+    ticks = UploadTicks()
+    notes: list[int] = []
+    for done in range(1, 11):
+        notes.extend(ticks.crossed(done, 10))
+    assert notes == [10, 20, 30, 40, 50, 60, 70, 80, 90, 100]
+    assert feedback_text("drawing", prompt="a star", assistant="OpenAI") == (
+        'Drawing "a star" with OpenAI…'
+    )
+    assert feedback_text("uploading", percent=20) == "Uploading to table… 20%"
+    assert feedback_text("done", name="Lotus Mandala", playing=True) == (
+        "Done: Lotus Mandala saved and playing"
+    )
+    assert feedback_text("done", name="Lotus Mandala") == "Done: Lotus Mandala saved"
+    assert feedback_text("busy") == "A drawing is already in progress."
+    assert feedback_text("error", error="The table rejected the upload") == (
+        "The table rejected the upload"
+    )
 
 
 def test_model_json_becomes_a_valid_centre_to_rim_path() -> None:

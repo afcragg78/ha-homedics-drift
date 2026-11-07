@@ -156,7 +156,22 @@ data:
   play: true
 ```
 
-The assistant is asked for one list of `[x, y]` points inside a circle. Those points are resampled, kept inside the disc, started at the centre, finished on the rim, and turned into a `.thr` path. If the answer is not a path, nothing is uploaded and **AI drawing** shows the error. The same sensor shows `running` while the request is in flight and `stored` when the table has accepted the pattern.
+The assistant is asked for one list of `[x, y]` points inside a circle. Those points are resampled, kept inside the disc, started at the centre, finished on the rim, and turned into a `.thr` path. If the answer is not a path, nothing is uploaded and **AI drawing** shows the error. The same sensor shows `running` while the request is in flight, a `progress` percentage while the pattern is uploading, and `stored` when the table has accepted it. A second press while one is running is ignored and a notice says a drawing is already in progress.
+
+A notification on the Home Assistant dashboard updates through the same stages for **Draw with AI**, **Send gallery design**, and **Random design**: drawing (AI only), uploading percent about every 10%, then done or the failure reason. You can also listen for the event and send it to your phone:
+
+```yaml
+alias: Drift drawing status
+triggers:
+  - trigger: event
+    event_type: homedics_drift_ai_status
+actions:
+  - action: notify.mobile_app_YOUR_PHONE
+    data:
+      message: "{{ trigger.event.data.message }}"
+```
+
+`trigger.event.data.stage` is `drawing`, `uploading`, `done`, or `error`. `trigger.event.data.progress` is the percent while uploading.
 
 ## Gallery
 

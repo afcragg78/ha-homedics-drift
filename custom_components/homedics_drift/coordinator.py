@@ -39,7 +39,9 @@ from .const import (
 )
 from .drawing import (
     build_instructions,
+    UploadTicks,
     choose_drawing_assistant,
+    feedback_text,
     generated_thr,
     model_text,
     path_from_model,
@@ -158,6 +160,9 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         self.ai_detail = ""
         self.ai_name = ""
         self.ai_pattern_id: int | None = None
+        self.ai_progress: int | None = None
+        self._draw_active = False
+        self._upload_ticks = UploadTicks()
         self.gallery_choice = gallery_names()[0]
         self.gallery_preview_at: datetime | None = None
         self._client: BleakClientWithServiceCache | None = None
@@ -800,7 +805,13 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         await self.async_upload_pattern(name=name, path=str(path), source=choice)
 
     async def async_upload_pattern(
-        self, *, name: str, path: str | None = None, thr: str | None = None, source: str = ""
+        self,
+        *,
+        name: str,
+        path: str | None = None,
+        thr: str | None = None,
+        source: str = "",
+        progress: Any = None,
     ) -> int:
         """Store a new pattern. Success is only the table's stored message."""
         cleaned = name.strip()
@@ -845,7 +856,7 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
                 )
             except PatternRejected as err:
                 raise HomeAssistantError(err.message) from err
-            await self._transfer(pattern_id, pages)
+            await self._transfer(pattern_id, pages, progress=progress)
             preview = self._preview_path(pattern_id)
             try:
                 png = await self.hass.async_add_executor_job(render_thr, text)
@@ -864,7 +875,12 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
             await self._scan_inbox(None)
             return pattern_id
 
-    async def _transfer(self, pattern_id: int, pages: list[list[tuple[int, int]]]) -> None:
+    async def _transfer(
+        self,
+        pattern_id: int,
+        pages: list[list[tuple[int, int]]],
+        progress: Any = None,
+    ) -> None:
         """Send start, pages, and end. Only ``0x34/3`` is success.
 
         If the transfer stops after start, one end packet is sent so the table
@@ -896,9 +912,13 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
                 break
             pending = list(range(len(pages)))
             delay = 0.1
+            sent_pages = 0
             for attempt in range(1, 7):
                 for index in pending:
                     await self.async_send(pattern_page(index + 1, pages[index]))
+                    sent_pages += 1
+                    if progress is not None:
+                        progress(sent_pages, len(pages))
                     await asyncio.sleep(delay)
                 await asyncio.sleep(delay)
                 await self.async_send(end_upload(pattern_id, len(pages)))
@@ -1121,18 +1141,8 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         self.ai_pattern_id = pattern_id
         self._publish()
 
-    async def _ask_once(self, prompt: str) -> str:
-        """One model call. The entity or agent is always named explicitly."""
-        try:
-            kind, target = choose_drawing_assistant(
-                configured_task=self.config_entry.options.get(CONF_AI_TASK_ENTITY),
-                configured_agent=self.config_entry.options.get(CONF_CONVERSATION_AGENT),
-                preferred_task=self._preferred_ai_task(),
-                task_states=self._task_states(),
-                agents=self._conversation_agents(),
-            )
-        except PatternRejected as err:
-            raise HomeAssistantError(err.message) from err
+    async def _ask_model(self, kind: str, target: str, prompt: str) -> str:
+        """One model call to an assistant that was already chosen."""
         instructions = build_instructions(prompt)
         if kind == "ai_task":
             if not self.hass.services.has_service("ai_task", "generate_data"):
@@ -1180,35 +1190,140 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
             raise HomeAssistantError(f"The conversation agent could not draw that: {err}") from err
         return model_text(result)
 
+    def _assistant_label(self, kind: str, target: str) -> str:
+        if kind == "ai_task":
+            state = self.hass.states.get(target)
+            if state is not None and state.name:
+                return state.name
+        for agent_id, label in self._conversation_agents():
+            if agent_id == target:
+                return label
+        return target
+
+    def _announce(
+        self,
+        stage: str,
+        *,
+        prompt: str = "",
+        assistant: str = "",
+        percent: int | None = None,
+        name: str = "",
+        playing: bool = False,
+        error: str = "",
+    ) -> None:
+        """Update the notification, the sensor, and the status event together."""
+        message = feedback_text(
+            stage,
+            prompt=prompt,
+            assistant=assistant,
+            percent=percent,
+            name=name,
+            playing=playing,
+            error=error,
+        )
+        if stage == "uploading" and percent is not None:
+            self.ai_progress = percent
+        elif stage == "done":
+            self.ai_progress = 100
+        elif stage == "drawing":
+            self.ai_progress = 0
+        elif stage == "error":
+            self.ai_progress = None
+        self._publish()
+        self.hass.bus.async_fire(
+            "homedics_drift_ai_status",
+            {
+                "stage": stage,
+                "progress": self.ai_progress,
+                "message": message,
+                "name": name,
+                "prompt": prompt,
+                "assistant": assistant,
+                "playing": playing,
+            },
+        )
+        self.hass.async_create_task(
+            self._post_notice(message),
+            name=f"{DOMAIN}-notice-{self.address}",
+        )
+
+    async def _post_notice(self, message: str) -> None:
+        """Create or replace the one Drift drawing notification. It can stay."""
+        with contextlib.suppress(Exception):
+            await self.hass.services.async_call(
+                "persistent_notification",
+                "create",
+                {
+                    "notification_id": f"{DOMAIN}_draw_{self.address.replace(':', '_')}",
+                    "title": "Drift",
+                    "message": message,
+                },
+                blocking=False,
+            )
+
+    def _reject_if_busy(self) -> None:
+        if not self._draw_active:
+            return
+        self._announce("busy")
+        raise HomeAssistantError("A drawing is already in progress")
+
+    def _note_upload(self, done: int, total: int, name: str) -> None:
+        for percent in self._upload_ticks.crossed(done, total):
+            self._announce("uploading", percent=percent, name=name)
+
     async def async_ai_draw(self, prompt: str, *, name: str | None = None, play: bool = False) -> int:
         """Ask the configured assistant for one path, then upload it."""
+        self._reject_if_busy()
         cleaned = " ".join(prompt.split())
         if not cleaned:
             raise HomeAssistantError("Type a prompt first")
         title = (name or cleaned[:40]).strip()
+        self._draw_active = True
+        self._upload_ticks = UploadTicks()
         self._set_ai("running", name=title)
         try:
-            raw = await self._ask_once(cleaned)
+            kind, target = choose_drawing_assistant(
+                configured_task=self.config_entry.options.get(CONF_AI_TASK_ENTITY),
+                configured_agent=self.config_entry.options.get(CONF_CONVERSATION_AGENT),
+                preferred_task=self._preferred_ai_task(),
+                task_states=self._task_states(),
+                agents=self._conversation_agents(),
+            )
+            assistant = self._assistant_label(kind, target)
+            self._announce("drawing", prompt=cleaned, assistant=assistant, name=title)
+            raw = await self._ask_model(kind, target, cleaned)
             try:
                 thr = path_from_model(raw)
             except PatternRejected as err:
                 raise HomeAssistantError(err.message) from err
-            pattern_id = await self.async_upload_pattern(name=title, thr=thr, source="ai")
-            detail = ""
-            if play and not self.session_on:
-                detail = "Power is off, so the pattern was saved but not played"
-            elif play:
-                async with self._command_lock:
-                    if self.session_on:
-                        await self.async_send(draw_pattern(pattern_id))
-                        self._replace(pattern_id=pattern_id, status=1)
-                    else:
-                        detail = "Power is off, so the pattern was saved but not played"
+            pattern_id = await self.async_upload_pattern(
+                name=title,
+                thr=thr,
+                source="ai",
+                progress=lambda done, total: self._note_upload(done, total, title),
+            )
+            playing = await self._play_if_on(pattern_id, play)
+            detail = "" if playing or not play else "Power is off, so the pattern was saved but not played"
             self._set_ai("stored", detail=detail, name=title, pattern_id=pattern_id)
+            self._announce("done", name=title, playing=playing, prompt=cleaned, assistant=assistant)
             return pattern_id
         except HomeAssistantError as err:
             self._set_ai("error", error=str(err), name=title)
+            self._announce("error", error=str(err), name=title, prompt=cleaned)
             raise
+        finally:
+            self._draw_active = False
+
+    async def _play_if_on(self, pattern_id: int, play: bool) -> bool:
+        """Start the pattern only while Power is already on."""
+        if not play or not self.session_on:
+            return False
+        async with self._command_lock:
+            if not self.session_on:
+                return False
+            await self.async_send(draw_pattern(pattern_id))
+            self._replace(pattern_id=pattern_id, status=1)
+        return True
 
     async def async_generate_pattern(
         self,
@@ -1325,13 +1440,24 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         return stored
 
     async def _upload_thr(self, name: str, thr: str, *, play: bool, source: str) -> int:
-        pattern_id = await self.async_upload_pattern(name=name, thr=thr, source=source)
-        if play and self.session_on:
-            async with self._command_lock:
-                if self.session_on:
-                    await self.async_send(draw_pattern(pattern_id))
-                    self._replace(pattern_id=pattern_id, status=1)
-        return pattern_id
+        self._reject_if_busy()
+        self._draw_active = True
+        self._upload_ticks = UploadTicks()
+        try:
+            pattern_id = await self.async_upload_pattern(
+                name=name,
+                thr=thr,
+                source=source,
+                progress=lambda done, total: self._note_upload(done, total, name),
+            )
+            playing = await self._play_if_on(pattern_id, play)
+            self._announce("done", name=name, playing=playing)
+            return pattern_id
+        except HomeAssistantError as err:
+            self._announce("error", error=str(err), name=name)
+            raise
+        finally:
+            self._draw_active = False
 
     async def async_rename_pattern(self, pattern_id: int, name: str) -> None:
         """Remember a display name. Nothing is sent to the table."""

@@ -206,4 +206,5 @@ class DriftAiJobSensor(DriftEntity, SensorEntity):
             "pattern_id": self.coordinator.ai_pattern_id,
             "prompt": self.coordinator.ai_prompt[:255],
             "ai_available": self.coordinator.ai_available(),
+            "progress": self.coordinator.ai_progress,
         }

@@ -68,6 +68,50 @@ def choose_drawing_assistant(
     )
 
 
+class UploadTicks:
+    """Percent marks to announce, about every 10 points."""
+
+    def __init__(self) -> None:
+        self._last = 0
+
+    def crossed(self, done: int, total: int) -> list[int]:
+        if total <= 0 or done <= 0:
+            return []
+        value = min(100, int(done * 100 / total))
+        marks: list[int] = []
+        mark = self._last + 10
+        while mark <= value:
+            marks.append(mark)
+            mark += 10
+        if marks:
+            self._last = marks[-1]
+        return marks
+
+
+def feedback_text(
+    stage: str,
+    *,
+    prompt: str = "",
+    assistant: str = "",
+    percent: int | None = None,
+    name: str = "",
+    playing: bool = False,
+    error: str = "",
+) -> str:
+    """The sentence shown for one stage of a drawing or gallery send."""
+    if stage == "drawing":
+        return f'Drawing "{prompt}" with {assistant}…'
+    if stage == "uploading":
+        return f"Uploading to table… {percent}%"
+    if stage == "done":
+        if playing:
+            return f"Done: {name} saved and playing"
+        return f"Done: {name} saved"
+    if stage == "busy":
+        return "A drawing is already in progress."
+    return error or "The drawing failed"
+
+
 def build_instructions(prompt: str) -> str:
     """One request for a single path. Callers send this once."""
     subject = " ".join(prompt.split())
