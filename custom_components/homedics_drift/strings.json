@@ -1,0 +1,64 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "description": "Choose a HoMedics Drift sand table. Tables advertise a Bluetooth name of at least 12 characters starting with KS. No pairing is required.",
+        "data": {
+          "address": "Table"
+        }
+      },
+      "bluetooth_confirm": {
+        "description": "Set up the HoMedics Drift table {name}?"
+      }
+    },
+    "abort": {
+      "already_configured": "This Drift table is already configured.",
+      "already_in_progress": "This Drift table is already being configured.",
+      "no_devices_found": "No HoMedics Drift tables were found. Plug the table in, bring a Bluetooth adapter or ESPHome proxy closer, and try again.",
+      "not_supported": "This Bluetooth device is not a HoMedics Drift table."
+    }
+  },
+  "entity": {
+    "light": {
+      "lamp": {
+        "name": "Light"
+      }
+    },
+    "media_player": {
+      "player": {
+        "name": "Player"
+      }
+    },
+    "number": {
+      "speed": {
+        "name": "Speed"
+      }
+    },
+    "select": {
+      "playlist": {
+        "name": "Playlist"
+      }
+    },
+    "sensor": {
+      "status": {
+        "name": "Status",
+        "state": {
+          "drawing": "Drawing",
+          "idle": "Idle",
+          "unknown": "Unknown"
+        }
+      },
+      "progress": {
+        "name": "Progress"
+      },
+      "pattern": {
+        "name": "Pattern"
+      }
+    },
+    "switch": {
+      "power": {
+        "name": "Power"
+      }
+    }
+  }
+}
