@@ -8,9 +8,12 @@ the table stores ids.
 
 from __future__ import annotations
 
+import io
 import math
+import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlparse
 
 USER_ID_MIN = 50000
 CLEAN_PATTERN_ID = 50000
@@ -319,6 +322,7 @@ class PatternLibrary:
     records: dict[int, PatternRecord] = field(default_factory=dict)
     aliases: dict[int, str] = field(default_factory=dict)
     clean_before: bool = False
+    favorites: set[str] = field(default_factory=set)
 
     def name_for(self, pattern_id: int) -> str | None:
         alias = self.aliases.get(pattern_id)
@@ -377,8 +381,23 @@ class PatternLibrary:
             record.name = cleaned
 
     def forget(self, pattern_id: int) -> None:
+        name = self.name_for(pattern_id)
         self.records.pop(pattern_id, None)
         self.aliases.pop(pattern_id, None)
+        if name:
+            self.favorites.discard(name)
+
+    def set_favorite(self, name: str, on: bool) -> None:
+        cleaned = name.strip()
+        if not cleaned:
+            raise PatternRejected("the pattern needs a name")
+        if on:
+            self.favorites.add(cleaned)
+        else:
+            self.favorites.discard(cleaned)
+
+    def favorite_names(self) -> list[str]:
+        return sorted(self.favorites)
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -394,6 +413,7 @@ class PatternLibrary:
             ],
             "aliases": {str(pattern_id): name for pattern_id, name in self.aliases.items()},
             "clean_before": self.clean_before,
+            "favorites": sorted(self.favorites),
         }
 
     @classmethod
@@ -420,6 +440,9 @@ class PatternLibrary:
                     )
         if data.get("clean_before") is True:
             library.clean_before = True
+        favorites = data.get("favorites")
+        if isinstance(favorites, list):
+            library.favorites = {str(name).strip() for name in favorites if str(name).strip()}
         aliases = data.get("aliases")
         if isinstance(aliases, dict):
             for key, value in aliases.items():
@@ -430,6 +453,67 @@ class PatternLibrary:
                 if isinstance(value, str) and value.strip():
                     library.aliases[pattern_id] = value.strip()
         return library
+
+
+MAX_IMPORT_BYTES = 1_500_000
+MAX_IMPORT_FILES = 12
+
+
+def https_pattern_url(url: str) -> str:
+    """Accept only a public https link. Nothing is bundled from the internet."""
+    cleaned = url.strip()
+    parsed = urlparse(cleaned)
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme != "https" or not host:
+        raise PatternRejected("the pattern link must start with https")
+    if host in {"localhost", "127.0.0.1", "0.0.0.0"} or host.endswith(".local"):
+        raise PatternRejected("that link is not a public pattern file")
+    return cleaned
+
+
+def _looks_like_thr(text: str) -> bool:
+    for line in text.splitlines():
+        parts = line.strip().replace(",", " ").split()
+        if len(parts) < 2 or parts[0].startswith("#"):
+            continue
+        try:
+            float(parts[0])
+            float(parts[1])
+        except ValueError:
+            continue
+        return True
+    return False
+
+
+def documents_from_download(filename: str, body: bytes) -> list[tuple[str, str]]:
+    """``.thr`` documents inside one download. Other files are ignored."""
+    if len(body) > MAX_IMPORT_BYTES:
+        raise PatternRejected("that download is too large")
+    if body[:2] == b"PK":
+        found: list[tuple[str, str]] = []
+        try:
+            archive = zipfile.ZipFile(io.BytesIO(body))
+        except zipfile.BadZipFile as err:
+            raise PatternRejected("that zip file could not be read") from err
+        for info in archive.infolist():
+            if info.is_dir() or not info.filename.lower().endswith(".thr"):
+                continue
+            if info.file_size > MAX_IMPORT_BYTES:
+                continue
+            text = archive.read(info).decode("utf-8", errors="replace")
+            if not _looks_like_thr(text):
+                continue
+            found.append((Path(info.filename).stem, text))
+            if len(found) >= MAX_IMPORT_FILES:
+                break
+        if not found:
+            raise PatternRejected("that zip has no .thr patterns")
+        return found
+    text = body.decode("utf-8", errors="replace")
+    if not _looks_like_thr(text):
+        raise PatternRejected("that file is not a .thr pattern")
+    stem = Path(urlparse(filename).path).stem or "Imported"
+    return [(stem, text)]
 
 
 def inbox_names(filenames: list[str], library: PatternLibrary) -> list[str]:

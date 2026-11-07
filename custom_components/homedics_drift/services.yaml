@@ -166,3 +166,31 @@ add_gallery_design:
       default: false
       selector:
         boolean:
+
+import_pattern_url:
+  fields:
+    device_id:
+      selector:
+        device:
+          integration: homedics_drift
+    url:
+      required: true
+      example: https://example.com/pattern.thr
+      selector:
+        text:
+
+set_favorite:
+  fields:
+    device_id:
+      selector:
+        device:
+          integration: homedics_drift
+    name:
+      required: true
+      example: Lotus Mandala
+      selector:
+        text:
+    favorite:
+      default: true
+      selector:
+        boolean:

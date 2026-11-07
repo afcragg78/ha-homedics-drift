@@ -27,6 +27,9 @@
       },
       "gallery": {
         "default": "mdi:image-filter-vintage"
+      },
+      "favorites": {
+        "default": "mdi:heart"
       }
     },
     "sensor": {
@@ -88,6 +91,9 @@
       },
       "clean_before": {
         "default": "mdi:broom"
+      },
+      "favorite": {
+        "default": "mdi:heart"
       }
     }
   }

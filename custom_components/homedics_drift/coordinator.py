@@ -21,6 +21,7 @@ from homeassistant.components import bluetooth
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
@@ -48,7 +49,9 @@ from .patterns import (
     cleaning_spiral,
     clean_play_order,
     deletion_refusal,
+    documents_from_download,
     find_stock_clean,
+    https_pattern_url,
     inbox_names,
     reusable_id,
     label_patterns,
@@ -1207,6 +1210,76 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         seed = _random.SystemRandom().randrange(1, 1_000_000_000)
         title, thr = random_gallery(seed)
         return await self._upload_thr(title, thr, play=self.session_on, source="gallery-random")
+
+    async def async_set_favorite(self, name: str, on: bool) -> None:
+        """Remember a design the user likes. Nothing is sent to the table."""
+        try:
+            self.library.set_favorite(name, on)
+        except PatternRejected as err:
+            raise HomeAssistantError(err.message) from err
+        await self._save_library()
+        self._publish()
+
+    async def async_open_favorite(self, name: str) -> None:
+        """Play a saved favorite. Power is not turned on."""
+        if name in gallery_names():
+            await self.async_add_gallery_design(name, play=self.session_on)
+            return
+        pattern_id = self.library.id_for_upload_name(name)
+        if pattern_id is None:
+            raise HomeAssistantError(f"Unknown favorite: {name}")
+        if not self.session_on:
+            raise HomeAssistantError("Drift power is off")
+        async with self._command_lock:
+            if not self.session_on:
+                return
+            await self.async_send(draw_pattern(pattern_id))
+            self._replace(pattern_id=pattern_id, status=1)
+
+    async def async_import_pattern_url(self, url: str) -> int:
+        """Download .thr files the user chose and upload the ones that fit.
+
+        Community files are not shipped with this integration. A file that is
+        too long is skipped. The clean pattern is never replaced.
+        """
+        try:
+            checked = https_pattern_url(url)
+        except PatternRejected as err:
+            raise HomeAssistantError(err.message) from err
+        session = async_get_clientsession(self.hass)
+        try:
+            async with session.get(checked, timeout=30) as response:
+                if response.status != 200:
+                    raise HomeAssistantError("That pattern link could not be downloaded")
+                body = await response.read()
+        except HomeAssistantError:
+            raise
+        except Exception as err:
+            raise HomeAssistantError("That pattern link could not be downloaded") from err
+        try:
+            documents = documents_from_download(checked, body)
+        except PatternRejected as err:
+            raise HomeAssistantError(err.message) from err
+        stored = 0
+        skipped: list[str] = []
+        for name, text in documents:
+            if self.slot_counts()[1] <= 0 and self.library.id_for_upload_name(name) is None:
+                skipped.append(name)
+                break
+            try:
+                await self.async_upload_pattern(name=name, thr=text, source="import")
+            except HomeAssistantError:
+                skipped.append(name)
+                continue
+            stored += 1
+        if stored == 0:
+            raise HomeAssistantError(
+                "Nothing from that link could be stored. Files must be .thr patterns short enough for the table."
+            )
+        if skipped:
+            self.ai_detail = "Skipped: " + ", ".join(skipped[:8])
+            self._publish()
+        return stored
 
     async def _upload_thr(self, name: str, thr: str, *, play: bool, source: str) -> int:
         pattern_id = await self.async_upload_pattern(name=name, thr=thr, source=source)

@@ -26,6 +26,7 @@ async def async_setup_entry(
             DriftPatternSelect(coordinator),
             DriftInboxSelect(coordinator),
             DriftGallerySelect(coordinator),
+            DriftFavoritesSelect(coordinator),
         ]
     )
 
@@ -167,3 +168,34 @@ class DriftGallerySelect(DriftEntity, SelectEntity):
         self.coordinator.gallery_choice = option
         self.coordinator.gallery_preview_at = datetime.now(timezone.utc)
         self.coordinator.async_update_listeners()
+
+
+class DriftFavoritesSelect(DriftEntity, SelectEntity):
+    """Designs the user marked with the Favorite switch.
+
+    Choosing one sends it if needed and plays it only while Power is on.
+    """
+
+    _attr_translation_key = "favorites"
+    _attr_icon = "mdi:heart"
+
+    def __init__(self, coordinator: DriftCoordinator) -> None:
+        """Identify the select."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}-favorites"
+
+    @property
+    def options(self) -> list[str]:
+        return self.coordinator.library.favorite_names()
+
+    @property
+    def current_option(self) -> str | None:
+        choice = self.coordinator.gallery_choice
+        if choice in self.coordinator.library.favorites:
+            return choice
+        return None
+
+    @override
+    async def async_select_option(self, option: str) -> None:
+        """Open this favorite. Power is not turned on."""
+        await self.coordinator.async_open_favorite(option)

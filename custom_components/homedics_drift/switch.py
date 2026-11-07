@@ -22,7 +22,11 @@ async def async_setup_entry(
     """Create the power switch."""
     coordinator = entry.runtime_data
     async_add_entities(
-        [DriftPowerSwitch(coordinator), DriftCleanBeforeSwitch(coordinator)]
+        [
+            DriftPowerSwitch(coordinator),
+            DriftCleanBeforeSwitch(coordinator),
+            DriftFavoriteSwitch(coordinator),
+        ]
     )
 
 
@@ -128,3 +132,30 @@ class DriftCleanBeforeSwitch(DriftEntity, RestoreEntity, SwitchEntity):
     async def async_turn_off(self, **kwargs: object) -> None:
         """Choose patterns without wiping first."""
         await self.coordinator.async_set_clean_before(False)
+
+
+class DriftFavoriteSwitch(DriftEntity, SwitchEntity):
+    """Mark the gallery design that is on screen. Choosing it later does not need a prompt."""
+
+    _attr_translation_key = "favorite"
+    _attr_icon = "mdi:heart"
+
+    def __init__(self, coordinator: DriftCoordinator) -> None:
+        """Identify the switch."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}-favorite"
+
+    @property
+    def is_on(self) -> bool:
+        """Whether the design currently chosen in the gallery is a favorite."""
+        return self.coordinator.gallery_choice in self.coordinator.library.favorites
+
+    @override
+    async def async_turn_on(self, **kwargs: object) -> None:
+        """Save the chosen gallery design as a favorite."""
+        await self.coordinator.async_set_favorite(self.coordinator.gallery_choice, True)
+
+    @override
+    async def async_turn_off(self, **kwargs: object) -> None:
+        """Remove the chosen gallery design from favorites."""
+        await self.coordinator.async_set_favorite(self.coordinator.gallery_choice, False)

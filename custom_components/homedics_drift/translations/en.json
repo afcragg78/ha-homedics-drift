@@ -46,6 +46,9 @@
       },
       "gallery": {
         "name": "Gallery design"
+      },
+      "favorites": {
+        "name": "Favorites"
       }
     },
     "sensor": {
@@ -79,6 +82,9 @@
       },
       "clean_before": {
         "name": "Clean before pattern"
+      },
+      "favorite": {
+        "name": "Favorite"
       }
     },
     "button": {
@@ -277,6 +283,38 @@
         "play": {
           "name": "Play",
           "description": "Start the design when Power is on."
+        }
+      }
+    },
+    "import_pattern_url": {
+      "name": "Import pattern link",
+      "description": "Download a .thr file or a zip of .thr files from an https link and upload the ones that fit. Nothing is stored in this integration ahead of time.",
+      "fields": {
+        "device_id": {
+          "name": "Table",
+          "description": "Drift table. Needed only when more than one table is set up."
+        },
+        "url": {
+          "name": "Link",
+          "description": "https link to a .thr file or a zip that contains .thr files."
+        }
+      }
+    },
+    "set_favorite": {
+      "name": "Set favorite",
+      "description": "Mark or unmark a design by name. Favorites show in the Favorites list.",
+      "fields": {
+        "device_id": {
+          "name": "Table",
+          "description": "Drift table. Needed only when more than one table is set up."
+        },
+        "name": {
+          "name": "Name",
+          "description": "Gallery or pattern name."
+        },
+        "favorite": {
+          "name": "Favorite",
+          "description": "Turn the heart on or off."
         }
       }
     }

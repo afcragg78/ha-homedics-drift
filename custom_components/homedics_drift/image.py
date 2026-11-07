@@ -10,7 +10,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .coordinator import DriftConfigEntry, DriftCoordinator
 from .entity import DriftEntity
-from .gallery import gallery_polar
+from .gallery import gallery_names, gallery_polar
 from .preview import render_preview
 
 
@@ -21,7 +21,13 @@ async def async_setup_entry(
 ) -> None:
     """Create the now-playing preview."""
     coordinator = entry.runtime_data
-    async_add_entities([DriftPreviewImage(coordinator), DriftGalleryImage(coordinator)])
+    async_add_entities(
+        [
+            DriftPreviewImage(coordinator),
+            DriftGalleryImage(coordinator),
+            *[DriftGalleryTile(coordinator, name) for name in gallery_names()],
+        ]
+    )
 
 
 class DriftPreviewImage(DriftEntity, ImageEntity):
@@ -71,5 +77,31 @@ class DriftGalleryImage(DriftEntity, ImageEntity):
 
         def _draw() -> bytes:
             return render_preview(gallery_polar(name), size=256)
+
+        return await self.hass.async_add_executor_job(_draw)
+
+
+class DriftGalleryTile(DriftEntity, ImageEntity):
+    """One gallery picture, so a dashboard can show a grid of them."""
+
+    _attr_has_entity_name = True
+    _attr_content_type = "image/png"
+    _attr_icon = "mdi:image-filter-vintage"
+
+    def __init__(self, coordinator: DriftCoordinator, design: str) -> None:
+        """Identify this design's picture."""
+        super().__init__(coordinator)
+        ImageEntity.__init__(self, coordinator.hass)
+        self._design = design
+        self._attr_name = design
+        slug = "".join(ch.lower() if ch.isalnum() else "-" for ch in design).strip("-")
+        self._attr_unique_id = f"{coordinator.address}-gallery-tile-{slug}"
+
+    async def async_image(self) -> bytes | None:
+        """The sand picture for this one design."""
+        design = self._design
+
+        def _draw() -> bytes:
+            return render_preview(gallery_polar(design), size=256)
 
         return await self.hass.async_add_executor_job(_draw)

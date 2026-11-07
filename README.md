@@ -175,6 +175,49 @@ data:
 
 ![Gallery contact sheet](docs/gallery-contact-sheet.png)
 
+You do not need to edit a dashboard. On the table's device page: pick a picture under **Gallery design**, turn on **Favorite** if you want it again, then press **Send gallery design**. Later, choose it from **Favorites**.
+
+If you want a wall of pictures, add a dashboard card and paste this. Change `YOUR_TABLE` to the start of the picture entity names you see on the device (each gallery name has its own picture). Tapping a picture sends that design and plays it when Power is on.
+
+```yaml
+type: grid
+columns: 2
+square: false
+cards:
+  - type: picture-entity
+    entity: image.YOUR_TABLE_lotus_mandala
+    name: Lotus Mandala
+    show_state: false
+    tap_action:
+      action: perform-action
+      perform_action: homedics_drift.add_gallery_design
+      target: {}
+      data:
+        name: Lotus Mandala
+        play: true
+  - type: picture-entity
+    entity: image.YOUR_TABLE_nebula_spiral
+    name: Nebula Spiral
+    show_state: false
+    tap_action:
+      action: perform-action
+      perform_action: homedics_drift.add_gallery_design
+      target: {}
+      data:
+        name: Nebula Spiral
+        play: true
+```
+
+Copy a block for any other name in the gallery. The picture entities are created for you.
+
+### Patterns from other people
+
+This integration does not include anyone else's pattern files.
+
+[Sandify Patterns](https://github.com/jeffeb3/sandify-patterns) by Jeff Eberl is MIT licensed (Copyright 2020 Jeff Eberl). It contains `.thr` files. You may import one with `homedics_drift.import_pattern_url` and an `https` link to a single `.thr` file or a zip of them. Files that are too long for the table are skipped. Several files in that repository are millions of points and will be refused. The MIT notice has to stay with those files if you share them again.
+
+Sisyphus tracks, Reddit posts, and other forum packs are the author's own copyright unless they say MIT, CC, or public domain. Do not import those. Sandify's own site says the same thing. We are not lawyers.
+
 ## What this integration does not do
 
 - The table does not send a stored pattern's path back, so a preview exists only for a pattern uploaded from this Home Assistant machine. Stock patterns can be renamed for the select, but they have no picture until you upload a file of your own.
