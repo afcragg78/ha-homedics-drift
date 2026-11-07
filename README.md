@@ -158,6 +158,23 @@ data:
 
 The assistant is asked for one list of `[x, y]` points inside a circle. Those points are resampled, kept inside the disc, started at the centre, finished on the rim, and turned into a `.thr` path. If the answer is not a path, nothing is uploaded and **AI drawing** shows the error. The same sensor shows `running` while the request is in flight and `stored` when the table has accepted the pattern.
 
+## Gallery
+
+Thirty-eight intricate designs are built into the integration. They are generated in code, not downloaded. Each path is one continuous line from the centre to the rim: layered mandalas, spirograph weaves, fractional roses, Lissajous figures, decaying harmonographs, galaxies, Chladni-style bands, wave rings, fern curls, and long sweeping arcs.
+
+Pick one in **Gallery design**. The row picture and **Gallery preview** show that design. Nothing is sent until you press **Send gallery design** or call:
+
+```yaml
+action: homedics_drift.add_gallery_design
+data:
+  name: Lotus Mandala
+  play: true
+```
+
+`play: true` starts it only while Power is on. **Random design** uploads a new variation of one of those designs. The same seed always repeats; each press uses a new seed.
+
+![Gallery contact sheet](docs/gallery-contact-sheet.png)
+
 ## What this integration does not do
 
 - The table does not send a stored pattern's path back, so a preview exists only for a pattern uploaded from this Home Assistant machine. Stock patterns can be renamed for the select, but they have no picture until you upload a file of your own.

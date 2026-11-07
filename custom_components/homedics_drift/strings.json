@@ -43,6 +43,9 @@
       },
       "inbox": {
         "name": "Folder pattern"
+      },
+      "gallery": {
+        "name": "Gallery design"
       }
     },
     "sensor": {
@@ -90,11 +93,20 @@
       },
       "draw_with_ai": {
         "name": "Draw with AI"
+      },
+      "send_gallery": {
+        "name": "Send gallery design"
+      },
+      "random_gallery": {
+        "name": "Random design"
       }
     },
     "image": {
       "preview": {
         "name": "Now Playing preview"
+      },
+      "gallery_preview": {
+        "name": "Gallery preview"
       }
     },
     "text": {
@@ -247,6 +259,24 @@
         "pen": {
           "name": "Pen offset",
           "description": "Spirograph pen distance."
+        }
+      }
+    },
+    "add_gallery_design": {
+      "name": "Add gallery design",
+      "description": "Upload one of the built-in gallery designs by its name. Plays only while Power is on.",
+      "fields": {
+        "device_id": {
+          "name": "Table",
+          "description": "Drift table. Needed only when more than one table is set up."
+        },
+        "name": {
+          "name": "Name",
+          "description": "Gallery name, such as Lotus Mandala or Nebula Spiral."
+        },
+        "play": {
+          "name": "Play",
+          "description": "Start the design when Power is on."
         }
       }
     }

@@ -150,3 +150,19 @@ generate_pattern:
           min: 0.1
           max: 20
           mode: box
+
+add_gallery_design:
+  fields:
+    device_id:
+      selector:
+        device:
+          integration: homedics_drift
+    name:
+      required: true
+      example: Lotus Mandala
+      selector:
+        text:
+    play:
+      default: false
+      selector:
+        boolean:

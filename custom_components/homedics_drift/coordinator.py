@@ -37,6 +37,7 @@ from .const import (
     WRITE_UUID,
 )
 from .drawing import build_instructions, generated_thr, model_text, path_from_model
+from .gallery import gallery_names, gallery_thr, random_gallery
 from .patterns import (
     STORAGE_CAP,
     PatternLibrary,
@@ -148,6 +149,8 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         self.ai_detail = ""
         self.ai_name = ""
         self.ai_pattern_id: int | None = None
+        self.gallery_choice = gallery_names()[0]
+        self.gallery_preview_at: datetime | None = None
         self._client: BleakClientWithServiceCache | None = None
         self._device: BLEDevice | None = None
         self._parser = PacketParser()
@@ -1191,6 +1194,28 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         except HomeAssistantError as err:
             self._set_ai("error", error=str(err), name=title)
             raise
+
+    async def async_add_gallery_design(self, name: str, *, play: bool = False) -> int:
+        """Save one shipped design and upload it. Play only while Power is on."""
+        thr = gallery_thr(name)
+        return await self._upload_thr(name, thr, play=play, source="gallery")
+
+    async def async_random_gallery(self) -> int:
+        """Upload a seeded variation. The same seed is not reused on purpose."""
+        import random as _random
+
+        seed = _random.SystemRandom().randrange(1, 1_000_000_000)
+        title, thr = random_gallery(seed)
+        return await self._upload_thr(title, thr, play=self.session_on, source="gallery-random")
+
+    async def _upload_thr(self, name: str, thr: str, *, play: bool, source: str) -> int:
+        pattern_id = await self.async_upload_pattern(name=name, thr=thr, source=source)
+        if play and self.session_on:
+            async with self._command_lock:
+                if self.session_on:
+                    await self.async_send(draw_pattern(pattern_id))
+                    self._replace(pattern_id=pattern_id, status=1)
+        return pattern_id
 
     async def async_rename_pattern(self, pattern_id: int, name: str) -> None:
         """Remember a display name. Nothing is sent to the table."""

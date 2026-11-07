@@ -25,6 +25,8 @@ async def async_setup_entry(
             DriftUploadButton(coordinator),
             DriftCleanButton(coordinator),
             DriftAiDrawButton(coordinator),
+            DriftSendGalleryButton(coordinator),
+            DriftRandomGalleryButton(coordinator),
         ]
     )
 
@@ -113,3 +115,40 @@ class DriftAiDrawButton(DriftEntity, ButtonEntity):
             self.coordinator.ai_prompt,
             play=self.coordinator.session_on,
         )
+
+
+class DriftSendGalleryButton(DriftEntity, ButtonEntity):
+    """Upload the gallery design that is selected, and play it if Power is on."""
+
+    _attr_translation_key = "send_gallery"
+    _attr_icon = "mdi:send"
+
+    def __init__(self, coordinator: DriftCoordinator) -> None:
+        """Identify the button."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}-send-gallery"
+
+    @override
+    async def async_press(self) -> None:
+        """Save, upload, and play only while Power is on."""
+        await self.coordinator.async_add_gallery_design(
+            self.coordinator.gallery_choice,
+            play=self.coordinator.session_on,
+        )
+
+
+class DriftRandomGalleryButton(DriftEntity, ButtonEntity):
+    """Upload a new seeded variation of a gallery design."""
+
+    _attr_translation_key = "random_gallery"
+    _attr_icon = "mdi:shuffle-variant"
+
+    def __init__(self, coordinator: DriftCoordinator) -> None:
+        """Identify the button."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}-random-gallery"
+
+    @override
+    async def async_press(self) -> None:
+        """Pick a design, vary it, and play only while Power is on."""
+        await self.coordinator.async_random_gallery()

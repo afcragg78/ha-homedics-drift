@@ -10,6 +10,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .coordinator import DriftConfigEntry, DriftCoordinator
 from .entity import DriftEntity
+from .gallery import gallery_names, gallery_picture
 
 
 async def async_setup_entry(
@@ -24,6 +25,7 @@ async def async_setup_entry(
             DriftPlaylistSelect(coordinator),
             DriftPatternSelect(coordinator),
             DriftInboxSelect(coordinator),
+            DriftGallerySelect(coordinator),
         ]
     )
 
@@ -127,3 +129,41 @@ class DriftInboxSelect(DriftEntity, SelectEntity):
             return
         self.coordinator.inbox_choice = option
         self.async_write_ha_state()
+
+
+class DriftGallerySelect(DriftEntity, SelectEntity):
+    """Shipped designs. Choosing one shows its picture and does not upload."""
+
+    _attr_translation_key = "gallery"
+    _attr_icon = "mdi:image-filter-vintage"
+
+    def __init__(self, coordinator: DriftCoordinator) -> None:
+        """Identify the select."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}-gallery"
+
+    @property
+    def options(self) -> list[str]:
+        return gallery_names()
+
+    @property
+    def current_option(self) -> str | None:
+        if self.coordinator.gallery_choice in self.options:
+            return self.coordinator.gallery_choice
+        return self.options[0]
+
+    @property
+    def entity_picture(self) -> str | None:
+        """Preview of the design that is currently chosen."""
+        return gallery_picture(self.current_option or "")
+
+    @override
+    async def async_select_option(self, option: str) -> None:
+        """Remember the design. The send button uploads it."""
+        if option not in gallery_names():
+            return
+        from datetime import datetime, timezone
+
+        self.coordinator.gallery_choice = option
+        self.coordinator.gallery_preview_at = datetime.now(timezone.utc)
+        self.coordinator.async_update_listeners()

@@ -10,6 +10,8 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .coordinator import DriftConfigEntry, DriftCoordinator
 from .entity import DriftEntity
+from .gallery import gallery_polar
+from .preview import render_preview
 
 
 async def async_setup_entry(
@@ -18,7 +20,8 @@ async def async_setup_entry(
     async_add_entities: AddConfigEntryEntitiesCallback,
 ) -> None:
     """Create the now-playing preview."""
-    async_add_entities([DriftPreviewImage(entry.runtime_data)])
+    coordinator = entry.runtime_data
+    async_add_entities([DriftPreviewImage(coordinator), DriftGalleryImage(coordinator)])
 
 
 class DriftPreviewImage(DriftEntity, ImageEntity):
@@ -42,3 +45,31 @@ class DriftPreviewImage(DriftEntity, ImageEntity):
     async def async_image(self) -> bytes | None:
         """The saved PNG, or nothing when this pattern has no preview."""
         return await self.hass.async_add_executor_job(self.coordinator.preview_bytes)
+
+
+class DriftGalleryImage(DriftEntity, ImageEntity):
+    """Larger sand picture of the gallery design that is selected."""
+
+    _attr_translation_key = "gallery_preview"
+    _attr_content_type = "image/png"
+    _attr_icon = "mdi:image-filter-vintage"
+
+    def __init__(self, coordinator: DriftCoordinator) -> None:
+        """Identify the image."""
+        super().__init__(coordinator)
+        ImageEntity.__init__(self, coordinator.hass)
+        self._attr_unique_id = f"{coordinator.address}-gallery-preview"
+
+    @property
+    def image_last_updated(self) -> datetime | None:
+        """Changes when another gallery design is chosen."""
+        return self.coordinator.gallery_preview_at
+
+    async def async_image(self) -> bytes | None:
+        """Render the chosen design. Nothing is sent to the table."""
+        name = self.coordinator.gallery_choice
+
+        def _draw() -> bytes:
+            return render_preview(gallery_polar(name), size=256)
+
+        return await self.hass.async_add_executor_job(_draw)
