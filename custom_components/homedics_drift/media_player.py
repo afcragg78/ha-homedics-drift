@@ -14,7 +14,14 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .coordinator import DriftConfigEntry, DriftCoordinator
 from .entity import DriftEntity
-from .protocol import playback_allowed, shown_playback
+from .protocol import playback_allowed, player_controls, shown_playback
+
+_CONTROL_FEATURES = {
+    "play": MediaPlayerEntityFeature.PLAY,
+    "pause": MediaPlayerEntityFeature.PAUSE,
+    "next": MediaPlayerEntityFeature.NEXT_TRACK,
+    "previous": MediaPlayerEntityFeature.PREVIOUS_TRACK,
+}
 
 
 async def async_setup_entry(
@@ -27,23 +34,14 @@ async def async_setup_entry(
 
 
 class DriftPlayer(DriftEntity, MediaPlayerEntity):
-    """Play, pause, and skip patterns.
+    """Play, pause, and skip. These buttons never move the power switch.
 
-    Play and pause are one toggle on the wire (0x14/3). Next and previous are
-    0x14/4 and 0x14/5. Power is the separate switch; turning the player on
-    only sends soft power when the table is off, then toggles playback if the
-    ball is idle.
+    While power is off the player reports off and advertises no play, pause,
+    next, previous, or source controls, so the card has nothing to press.
     """
 
     _attr_translation_key = "player"
     _attr_icon = "mdi:draw"
-    _attr_supported_features = (
-        MediaPlayerEntityFeature.PLAY
-        | MediaPlayerEntityFeature.PAUSE
-        | MediaPlayerEntityFeature.NEXT_TRACK
-        | MediaPlayerEntityFeature.PREVIOUS_TRACK
-        | MediaPlayerEntityFeature.TURN_ON
-    )
 
     def __init__(self, coordinator: DriftCoordinator) -> None:
         """Identify the player."""
@@ -61,14 +59,22 @@ class DriftPlayer(DriftEntity, MediaPlayerEntity):
         return None
 
     @property
+    def supported_features(self) -> MediaPlayerEntityFeature:
+        """No transport buttons while power is off. No player power button ever."""
+        flags = MediaPlayerEntityFeature(0)
+        for name in player_controls(self.coordinator.session_on):
+            flags |= _CONTROL_FEATURES[name]
+        return flags
+
+    @property
     def state(self) -> MediaPlayerState | None:
-        """Playing or paused from the drawing status. Off while soft power is off."""
+        """Off for the whole time the power switch is off, without flicker."""
+        if not self.coordinator.session_on or not self.coordinator.session_settled:
+            return MediaPlayerState.OFF
         data = self.coordinator.data
         if data is None:
             return None
-        activity = shown_playback(data.power_on, data.drawing)
-        if activity == "off":
-            return MediaPlayerState.OFF
+        activity = shown_playback(True, data.drawing, settled=True)
         if activity == "playing":
             return MediaPlayerState.PLAYING
         return MediaPlayerState.PAUSED
@@ -89,19 +95,18 @@ class DriftPlayer(DriftEntity, MediaPlayerEntity):
             return None
         return self.coordinator.catalogue.label_for(data.playlist_id)
 
-    def _asleep(self) -> bool:
-        data = self.coordinator.data
-        return data is not None and not playback_allowed(data.power_on)
+    def _awake(self) -> bool:
+        return playback_allowed(self.coordinator.session_on)
 
     @override
     async def async_turn_on(self) -> None:
-        """Wake soft sleep. The power switch follows. Playback stays stopped."""
-        await self.coordinator.async_set_power(True)
+        """Does nothing. The Power switch is the only way to turn power on."""
+        return
 
     @override
     async def async_media_play(self) -> None:
-        """Start drawing unless the table is asleep or already drawing."""
-        if self._asleep():
+        """Start drawing. Ignored while power is off, and it does not turn power on."""
+        if not self._awake():
             return
         data = self.coordinator.data
         if data is not None and not data.drawing:
@@ -109,8 +114,8 @@ class DriftPlayer(DriftEntity, MediaPlayerEntity):
 
     @override
     async def async_media_pause(self) -> None:
-        """Pause when the ball is drawing. Ignored while soft power is off."""
-        if self._asleep():
+        """Pause when the ball is drawing. Does not change the power switch."""
+        if not self._awake():
             return
         data = self.coordinator.data
         if data is not None and data.drawing:
@@ -118,21 +123,21 @@ class DriftPlayer(DriftEntity, MediaPlayerEntity):
 
     @override
     async def async_media_play_pause(self) -> None:
-        """Send the play/pause toggle. Ignored while soft power is off."""
-        if self._asleep():
+        """Send the play/pause toggle. Ignored while power is off."""
+        if not self._awake():
             return
         await self.coordinator.async_toggle_playback()
 
     @override
     async def async_media_next_track(self) -> None:
-        """Skip to the next pattern. Ignored while soft power is off."""
-        if self._asleep():
+        """Skip to the next pattern. Ignored while power is off."""
+        if not self._awake():
             return
         await self.coordinator.async_next()
 
     @override
     async def async_media_previous_track(self) -> None:
-        """Skip to the previous pattern. Ignored while soft power is off."""
-        if self._asleep():
+        """Skip to the previous pattern. Ignored while power is off."""
+        if not self._awake():
             return
         await self.coordinator.async_previous()

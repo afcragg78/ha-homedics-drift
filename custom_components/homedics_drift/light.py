@@ -53,8 +53,8 @@ class DriftLight(DriftEntity, LightEntity):
 
     @property
     def is_on(self) -> bool:
-        """Lamp power. Brightness 0 and a held off command are off."""
-        return self._state.lamp_on
+        """Off while the power switch is off, otherwise the lamp's own state."""
+        return self.coordinator.session_on and self._state.lamp_on
 
     @property
     def brightness(self) -> int | None:
@@ -77,6 +77,8 @@ class DriftLight(DriftEntity, LightEntity):
         table has not reported one). From off, that is ``0x14/15``, ``0x14/13``
         and ``0x11/4``, not the plain brightness write used to turn the lamp off.
         """
+        if not self.coordinator.session_on:
+            return
         requested = (
             _ha_to_table(kwargs[ATTR_BRIGHTNESS]) if ATTR_BRIGHTNESS in kwargs else None
         )

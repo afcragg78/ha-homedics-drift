@@ -34,15 +34,17 @@ from custom_components.homedics_drift.protocol import (
     is_drift_name,
     is_raw_playlist_id,
     LampHold,
-    PowerHold,
     lamp_on_packets,
     light_mode,
     parse_light_mode_echo,
     reconcile_lamp,
-    reconcile_power,
     PowerQueue,
     playback_allowed,
+    player_controls,
+    project_session,
+    session_actions,
     shown_playback,
+    transport_action,
     normalize_advertised_name,
     resolved_lamp_level,
     pattern_label,
@@ -480,57 +482,83 @@ def _nul(text: str) -> bytes:
     return text.encode("ascii") + b"\x00"
 
 
-def test_power_command_is_absolute_on_or_off() -> None:
-    off = power(False)
-    on = power(True)
-    assert off.data == bytes((16, 0))
-    assert on.data == bytes((16, 1))
-    assert off.command == 0x14
-    assert on.command == 0x14
-    # Play/pause is a different action. Power never sends that toggle.
-    assert play_pause().data == bytes((3,))
-    assert off.data != play_pause().data
-    assert on.data != play_pause().data
+def test_table_power_byte_is_not_the_switch() -> None:
+    # 0x14/16 exists, but the switch does not send it. Value 0 is not real off.
+    assert power(False).data == bytes((16, 0))
+    assert "table_power" not in session_actions(False, drawing=True)
+    assert session_actions(False, drawing=True) == ("pause", "light_off")
+    assert session_actions(False, drawing=False) == ("light_off",)
+    assert session_actions(True, drawing=False) == ("light_on", "resume")
+    assert session_actions(True, drawing=True) == ("light_on",)
 
 
-def test_power_switch_follows_the_table_and_a_disagreement_corrects_it() -> None:
-    assert reconcile_power(True, None) == (True, None)
-    assert reconcile_power(False, None) == (False, None)
-    # Still queued: a status that has not seen the command does not undo it.
-    queued = PowerHold(on=False, sent=False)
-    assert reconcile_power(True, queued) == (False, queued)
-    sent_off = PowerHold(on=False, sent=True)
-    assert reconcile_power(False, sent_off) == (False, None)
-    # The table stayed on. The switch must show on, not stick at the command.
-    assert reconcile_power(True, sent_off) == (True, None)
-    sent_on = PowerHold(on=True, sent=True)
-    assert reconcile_power(True, sent_on) == (True, None)
-    assert reconcile_power(False, sent_on) == (False, None)
-    assert reconcile_power(None, sent_off) == (False, sent_off)
-    assert reconcile_power(None, None) == (None, None)
+def test_status_packets_cannot_bounce_power_back_on() -> None:
+    # What the table did: powerOn stayed true, playback paused, then ran again.
+    reports = (
+        (True, True, True),
+        (True, False, True),
+        (True, True, True),
+        (True, False, False),
+    )
+    for reported_power, drawing, reported_lamp in reports:
+        switch, player, lamp = project_session(
+            False,
+            settled=True,
+            reported_power=reported_power,
+            drawing=drawing,
+            reported_lamp=reported_lamp,
+        )
+        assert switch is False
+        assert player == "off"
+        assert lamp is False
+    # During the command the same packets still cannot flip the switch or player.
+    switch, player, lamp = project_session(
+        False,
+        settled=False,
+        reported_power=True,
+        drawing=False,
+        reported_lamp=True,
+    )
+    assert (switch, player, lamp) == (False, "off", False)
 
 
-def test_rapid_power_flips_collapse_to_the_last_absolute_value() -> None:
+def test_rapid_power_flips_collapse_to_the_last_request() -> None:
     queue = PowerQueue()
     queue.push(False)
     queue.push(True)
     queue.push(False)
     assert queue.pop() is False
     assert queue.pop() is None
-    queue.push(True)
-    queue.push(True)
-    assert queue.pop() is True
 
 
-def test_player_follows_soft_power() -> None:
-    assert shown_playback(False, True) == "off"
-    assert shown_playback(False, False) == "off"
-    assert shown_playback(True, True) == "playing"
-    assert shown_playback(True, False) == "paused"
-    assert shown_playback(None, True) == "playing"
+def test_pause_does_not_change_power_and_play_does_not_turn_it_on() -> None:
+    assert transport_action("pause", True, drawing=True) == (True, "pause")
+    assert transport_action("pause", True, drawing=False) == (True, None)
+    assert transport_action("pause", False, drawing=True) == (False, None)
+    assert transport_action("play", False, drawing=False) == (False, None)
+    assert transport_action("play", False, drawing=True) == (False, None)
+    assert transport_action("play", True, drawing=False) == (True, "resume")
+    assert transport_action("play", True, drawing=True) == (True, None)
+    # Only the power switch changes power.
+    assert transport_action("power_off", True, drawing=True) == (False, "session_off")
+    assert transport_action("power_on", False, drawing=False) == (True, "session_on")
     assert playback_allowed(False) is False
     assert playback_allowed(True) is True
-    assert playback_allowed(None) is True
+
+
+def test_player_hides_every_transport_control_while_power_is_off() -> None:
+    hidden = player_controls(False)
+    assert hidden == frozenset()
+    for name in ("play", "pause", "next", "previous", "turn_on", "select_source"):
+        assert name not in hidden
+    assert shown_playback(False, True) == "off"
+    assert shown_playback(False, False, settled=False) == "off"
+    shown = player_controls(True)
+    assert shown == frozenset({"play", "pause", "next", "previous"})
+    assert "turn_on" not in shown
+    assert "select_source" not in shown
+    assert shown_playback(True, True) == "playing"
+    assert shown_playback(True, False) == "paused"
 
 
 def test_playback_comes_from_drawing_status_without_requiring_power() -> None:
