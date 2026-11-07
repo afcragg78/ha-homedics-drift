@@ -50,30 +50,50 @@ class DriftPlayer(DriftEntity, MediaPlayerEntity):
         self._attr_unique_id = f"{coordinator.address}-player"
 
     @property
-    def state(self) -> MediaPlayerState:
-        """Off when the table is powered down, otherwise playing or paused."""
-        if self._state.power_on is False:
-            return MediaPlayerState.OFF
-        if self._state.drawing:
+    def available(self) -> bool:
+        """Available whenever the table is connected, same as the other entities."""
+        return super().available
+
+    @property
+    def entity_picture(self) -> None:
+        """No artwork. The base player reads this even while unavailable."""
+        return None
+
+    @property
+    def state(self) -> MediaPlayerState | None:
+        """Playing or paused from the drawing status. None until the first report."""
+        data = self.coordinator.data
+        if data is None:
+            return None
+        if data.playback == "playing":
             return MediaPlayerState.PLAYING
         return MediaPlayerState.PAUSED
 
     @property
-    def media_title(self) -> str:
-        """Current pattern id."""
-        return f"Pattern {self._state.pattern_id}"
+    def media_title(self) -> str | None:
+        """Current pattern id, once a status packet has arrived."""
+        data = self.coordinator.data
+        if data is None:
+            return None
+        return f"Pattern {data.pattern_id}"
 
     @property
     def media_playlist(self) -> str | None:
         """Playlist id from the running-state broadcast, when one is active."""
-        return self._state.playlist_id or None
+        data = self.coordinator.data
+        if data is None:
+            return None
+        return data.playlist_id or None
 
     @override
     async def async_turn_on(self) -> None:
         """Power the table on and start playback when it is idle."""
-        if self._state.power_on is False:
+        data = self.coordinator.data
+        if data is None:
+            return
+        if data.power_on is False:
             await self.coordinator.async_set_power(True)
-        if not self._state.drawing:
+        if not data.drawing:
             await self.coordinator.async_toggle_playback()
 
     @override
@@ -84,13 +104,17 @@ class DriftPlayer(DriftEntity, MediaPlayerEntity):
     @override
     async def async_media_pause(self) -> None:
         """Pause when the ball is drawing. The toggle is not sent while idle."""
-        if self._state.drawing:
+        data = self.coordinator.data
+        if data is not None and data.drawing:
             await self.coordinator.async_toggle_playback()
 
     @override
     async def async_media_play_pause(self) -> None:
         """Send the table's play/pause toggle, powering on first if needed."""
-        if self._state.power_on is False:
+        data = self.coordinator.data
+        if data is None:
+            return
+        if data.power_on is False:
             await self.coordinator.async_set_power(True)
         await self.coordinator.async_toggle_playback()
 
