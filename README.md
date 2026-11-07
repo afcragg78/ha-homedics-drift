@@ -24,7 +24,7 @@ afcragg78 posted this repository. They are not the author of Drifted or of this 
 
 Tables do not pair. Only one Bluetooth central can be connected. While Home Assistant holds the link, the HoMedics phone app cannot connect. Disabling this config entry, or stopping Home Assistant, closes the connection so the phone app can connect again. Drawing that is already running on the table keeps going.
 
-The advertised name sometimes has a trailing carriage return or line feed. The integration trims that before matching. Discovery uses Home Assistant's Bluetooth matcher `local_name: KS*`.
+The advertised name sometimes has a trailing carriage return or line feed. The integration trims that before matching. There is no Bluetooth discovery matcher in the manifest: `KS*` is rejected by Home Assistant because a pattern in the first three characters would match too broadly and stop the Bluetooth integration from loading, and the UART service UUID is shared with other modules. Add the integration and pick a nearby device whose name starts with `KS`.
 
 Requires Home Assistant 2026.11 or newer.
 
@@ -58,7 +58,7 @@ HACS ships with Home Assistant as Settings → Marketplace. There is no separate
 5. Select **Add**. If the type is not detected, choose **Integration** and select **Add** again.
 6. Open **HoMedics Drift** in the list and install it.
 7. If the integration does not appear yet, restart Home Assistant.
-8. Plug in the sand table. Home Assistant should discover it. Confirm the prompt, or go to **Settings → Devices & services → Add integration → HoMedics Drift** and pick the table from the list.
+8. Plug in the sand table. Go to **Settings → Devices & services → Add integration → HoMedics Drift** and pick the table from the list of nearby devices whose name starts with `KS`.
 
 You can also open this link on a phone that has the Home Assistant app, which adds the repository for both the Marketplace and classic HACS:
 

@@ -45,7 +45,13 @@ class DriftConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_bluetooth(
         self, discovery_info: BluetoothServiceInfoBleak
     ) -> ConfigFlowResult:
-        """Handle a device matched by the KS* local-name filter."""
+        """Handle a Bluetooth discovery, if a matcher is ever added.
+
+        There is no manifest matcher. ``KS*`` is illegal (a pattern in the
+        first three characters aborts the Bluetooth integration), and the
+        UART service UUID is shared by many modules. Setup is the manual
+        pick list, which keeps names that start with KS.
+        """
         name = _drift_name(discovery_info)
         if name is None:
             return self.async_abort(reason="not_supported")
