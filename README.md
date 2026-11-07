@@ -175,7 +175,9 @@ actions:
 
 ## Gallery
 
-Thirty-eight intricate designs are built into the integration. They are generated in code, not downloaded. Each path is one continuous line from the centre to the rim: layered mandalas, spirograph weaves, fractional roses, Lissajous figures, decaying harmonographs, galaxies, Chladni-style bands, wave rings, fern curls, and long sweeping arcs.
+Forty designs are built into the integration, in six groups: Mandalas, Florals, Geometric, Spirals, Waves, and Cosmic. They are generated in code, not downloaded. Each one is a single continuous line from the centre to the rim. Petals, stars, and rings are joined along the centre or the rim, so the ball does not cut straight across the sand between copies. The pictures are tan sand with dark grooves.
+
+**Random design** uses the same kinds of paths, with a small seeded change, so a random send stays as dense as the named design.
 
 Pick one in **Gallery design**. The row picture and **Gallery preview** show that design. Nothing is sent until you press **Send gallery design** or call:
 
@@ -224,6 +226,40 @@ cards:
 ```
 
 Copy a block for any other name in the gallery. The picture entities are created for you.
+
+## Dashboard card
+
+The integration serves `drift-table-card.js` itself and registers it with Home Assistant, so you do not install a second HACS frontend repo. Add a card:
+
+```yaml
+type: custom:drift-table-card
+entity: media_player.YOUR_TABLE
+```
+
+`device:` works in place of `entity:` if you already have the device id. The card finds the other entities on that device.
+
+It uses the dashboard theme: `ha-card`, `--ha-card-background`, `--primary-text-color`, `--primary-color`, `--ha-card-border-radius`, and the other theme variables. Nothing is frosted unless you ask. `style: frosted` turns on a translucent blur. `style: minimal` drops the card fill and shadow.
+
+Sections are on unless you set them to `false`:
+
+```yaml
+type: custom:drift-table-card
+entity: media_player.YOUR_TABLE
+style: native
+show_now: true
+show_gallery: true
+show_create: true
+show_light: true
+show_speed: true
+show_clean: true
+show_storage: false
+```
+
+Now Playing shows the sand in a circle, the lamp colour as a glow, and a progress ring from the progress the table already reports. When this Home Assistant machine has the pattern's path (a gallery design, an upload, or an AI drawing), the card draws the finished grooves up to that progress, leaves the rest faint, and moves a ball along the line. The ball eases between progress updates in the browser. The card does not poll the table. A stock pattern that was never uploaded here has no path, so you only get the ring.
+
+Draw on a gallery picture uploads that design and plays it only while Power is on. If **Clean before pattern** is on, the wipe runs first. **Draw With AI** uses the same rule as the Draw with AI button, including **Clean before AI drawings**. Play, pause, next, and previous stay disabled while Power is off. Clean Sand does too.
+
+![Drift table card](docs/drift-table-card.png)
 
 ### Patterns from other people
 

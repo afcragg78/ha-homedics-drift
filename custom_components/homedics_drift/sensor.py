@@ -151,6 +151,7 @@ class DriftNowPlayingSensor(DriftEntity, SensorEntity):
             "pattern_id": state.pattern_id,
             "pattern_index": index,
             "progress": round(state.progress * 100, 2),
+            "path_known": self.coordinator.has_known_path(state.pattern_id),
             "stored_patterns": [label for label, _pattern_id in self.coordinator.pattern_choices()],
         }
 

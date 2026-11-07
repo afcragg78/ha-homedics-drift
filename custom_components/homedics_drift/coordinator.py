@@ -49,12 +49,13 @@ from .drawing import (
     model_text,
     path_from_model,
 )
-from .gallery import gallery_names, gallery_thr, random_gallery
+from .gallery import gallery_names, gallery_polar, gallery_thr, random_gallery, trace_points
 from .patterns import (
     STORAGE_CAP,
     PatternLibrary,
     CleanList,
     PatternRejected,
+    parse_thr,
     allocate_id,
     choose_clean_upload_id,
     cleaning_spiral,
@@ -1474,7 +1475,23 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
                 source=source,
                 progress=lambda done, total: self._note_upload(done, total, name),
             )
-            playing = await self._play_if_on(pattern_id, play)
+            playing = False
+            if play and self.session_on and self.library.clean_before:
+                self._announce("cleaning", name=name)
+                clean_id = await self._ensure_clean_id()
+                if self.session_on and clean_id != pattern_id:
+                    self._clean_follow += 1
+                    token = self._clean_follow
+                    async with self._command_lock:
+                        if self.session_on:
+                            await self.async_send(draw_pattern(clean_id))
+                            self._replace(pattern_id=clean_id, status=1)
+                    if await self._wait_until_clean_done(token, clean_id):
+                        playing = await self._play_if_on(pattern_id, True)
+                else:
+                    playing = await self._play_if_on(pattern_id, True)
+            else:
+                playing = await self._play_if_on(pattern_id, play)
             self._announce("done", name=name, playing=playing)
             return pattern_id
         except HomeAssistantError as err:
@@ -1491,6 +1508,34 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
             raise HomeAssistantError(err.message) from err
         await self._save_library()
         self._publish()
+
+    def has_known_path(self, pattern_id: int) -> bool:
+        """True when this machine can draw the pattern, not only a stock id."""
+        record = self.library.records.get(pattern_id)
+        if record is not None and record.thr.strip():
+            return True
+        name = self.library.name_for(pattern_id)
+        return bool(name and name in gallery_names())
+
+    def known_path(self, pattern_id: int) -> list[list[float]] | None:
+        """Polar points for the live trace. None for a stock pattern with no file."""
+        polar: list[tuple[float, float]] | None = None
+        record = self.library.records.get(pattern_id)
+        if record is not None and record.thr.strip():
+            try:
+                polar = parse_thr(record.thr)
+            except PatternRejected:
+                polar = None
+        if not polar:
+            name = self.library.name_for(pattern_id)
+            if name and name in gallery_names():
+                try:
+                    polar = gallery_polar(name)
+                except PatternRejected:
+                    polar = None
+        if not polar or len(polar) < 2:
+            return None
+        return trace_points(polar)
 
     def preview_bytes(self) -> bytes | None:
         """PNG for the pattern that is on now, when this machine has one."""
