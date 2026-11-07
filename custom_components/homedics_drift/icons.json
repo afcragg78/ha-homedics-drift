@@ -1,0 +1,40 @@
+{
+  "entity": {
+    "light": {
+      "lamp": {
+        "default": "mdi:lightbulb"
+      }
+    },
+    "media_player": {
+      "player": {
+        "default": "mdi:draw"
+      }
+    },
+    "number": {
+      "speed": {
+        "default": "mdi:speedometer"
+      }
+    },
+    "select": {
+      "playlist": {
+        "default": "mdi:playlist-play"
+      }
+    },
+    "sensor": {
+      "status": {
+        "default": "mdi:information-outline"
+      },
+      "progress": {
+        "default": "mdi:progress-clock"
+      },
+      "pattern": {
+        "default": "mdi:palette-outline"
+      }
+    },
+    "switch": {
+      "power": {
+        "default": "mdi:power"
+      }
+    }
+  }
+}
