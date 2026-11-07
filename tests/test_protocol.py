@@ -1,8 +1,9 @@
 """Packet encode/decode tests against Drifted's published vectors.
 
-The fixture is ``spec/vectors/protocol.json`` from
-https://github.com/joshlannin/drifted (MIT). Drifted documents the bytes;
-this suite checks an independent Python codec against them.
+The fixture is ``spec/vectors/protocol.json`` from Josh Lannin's Drifted
+project (https://github.com/joshlannin/drifted, MIT). Drifted
+reverse-engineered the bytes. This Home Assistant integration was converted
+from Drifted using Grok Bot.
 """
 
 from __future__ import annotations
