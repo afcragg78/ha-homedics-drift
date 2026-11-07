@@ -55,3 +55,98 @@ rename_pattern:
       example: Evening spiral
       selector:
         text:
+
+ai_draw:
+  fields:
+    device_id:
+      selector:
+        device:
+          integration: homedics_drift
+    prompt:
+      required: true
+      example: a five pointed star
+      selector:
+        text:
+          multiline: true
+    name:
+      example: Star
+      selector:
+        text:
+    play:
+      default: false
+      selector:
+        boolean:
+
+generate_pattern:
+  fields:
+    device_id:
+      selector:
+        device:
+          integration: homedics_drift
+    type:
+      required: true
+      example: spiral
+      selector:
+        select:
+          options:
+            - spiral
+            - rose
+            - star
+            - wave
+            - spirograph
+    name:
+      example: Rose
+      selector:
+        text:
+    play:
+      default: false
+      selector:
+        boolean:
+    turns:
+      selector:
+        number:
+          min: 1
+          max: 40
+          mode: box
+    petals:
+      selector:
+        number:
+          min: 2
+          max: 12
+          mode: box
+    points:
+      selector:
+        number:
+          min: 3
+          max: 12
+          mode: box
+    waves:
+      selector:
+        number:
+          min: 1
+          max: 24
+          mode: box
+    loops:
+      selector:
+        number:
+          min: 1
+          max: 12
+          mode: box
+    outer:
+      selector:
+        number:
+          min: 1
+          max: 20
+          mode: box
+    inner:
+      selector:
+        number:
+          min: 0.2
+          max: 19
+          mode: box
+    pen:
+      selector:
+        number:
+          min: 0.1
+          max: 20
+          mode: box

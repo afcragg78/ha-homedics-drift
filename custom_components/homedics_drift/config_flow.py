@@ -5,15 +5,17 @@ from __future__ import annotations
 from typing import Any
 
 import probatio
+import voluptuous as vol
 
 from homeassistant.components.bluetooth import (
     BluetoothServiceInfoBleak,
     async_discovered_service_info,
 )
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
+from homeassistant.config_entries import ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.const import CONF_ADDRESS
+from homeassistant.helpers import selector
 
-from .const import DOMAIN
+from .const import CONF_AI_TASK_ENTITY, CONF_CONVERSATION_AGENT, DOMAIN
 from .protocol import is_drift_name, normalize_advertised_name
 
 
@@ -31,10 +33,50 @@ def _drift_name(discovery: BluetoothServiceInfoBleak) -> str | None:
     return None
 
 
+class DriftOptionsFlow(OptionsFlow):
+    """Optional AI Task entity. No API key is stored."""
+
+    async def async_step_init(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Choose which assistant draws a prompt, if the user has one."""
+        if user_input is not None:
+            cleaned = {
+                key: value
+                for key, value in user_input.items()
+                if isinstance(value, str) and value.strip()
+            }
+            return self.async_create_entry(title="", data=cleaned)
+        current = self.config_entry.options
+        return self.async_show_form(
+            step_id="init",
+            data_schema=vol.Schema(
+                {
+                    vol.Optional(
+                        CONF_AI_TASK_ENTITY,
+                        description={"suggested_value": current.get(CONF_AI_TASK_ENTITY, "")},
+                    ): selector.selector({"entity": {"domain": "ai_task"}}),
+                    vol.Optional(
+                        CONF_CONVERSATION_AGENT,
+                        description={
+                            "suggested_value": current.get(CONF_CONVERSATION_AGENT, "")
+                        },
+                    ): selector.selector({"conversation_agent": {}}),
+                }
+            ),
+        )
+
+
 class DriftConfigFlow(ConfigFlow, domain=DOMAIN):
     """Set up a Drift table from discovery or a manual pick list."""
 
     VERSION = 1
+
+    @staticmethod
+    def async_get_options_flow(config_entry: Any) -> DriftOptionsFlow:
+        """Let the user pick an AI Task entity. The argument is unused."""
+        del config_entry
+        return DriftOptionsFlow()
 
     def __init__(self) -> None:
         """Initialize the flow."""

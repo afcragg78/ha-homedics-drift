@@ -65,6 +65,9 @@
       },
       "slots": {
         "name": "Pattern slots"
+      },
+      "ai_job": {
+        "name": "AI drawing"
       }
     },
     "switch": {
@@ -84,11 +87,31 @@
       },
       "clean_sand": {
         "name": "Clean sand"
+      },
+      "draw_with_ai": {
+        "name": "Draw with AI"
       }
     },
     "image": {
       "preview": {
         "name": "Now Playing preview"
+      }
+    },
+    "text": {
+      "ai_prompt": {
+        "name": "AI prompt"
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "AI drawing",
+        "description": "Optional. Choose the AI Task entity Home Assistant should use for one drawing. Leave both empty to use the default assistant when one is installed. No API key is stored here.",
+        "data": {
+          "ai_task_entity": "AI Task entity",
+          "conversation_agent": "Conversation agent"
+        }
       }
     }
   },
@@ -148,6 +171,82 @@
         "name": {
           "name": "Name",
           "description": "Name to show in the Pattern select."
+        }
+      }
+    },
+    "ai_draw": {
+      "name": "Draw with AI",
+      "description": "Ask the configured Home Assistant assistant for one sand drawing, then upload it. One model call. Nothing is played while Power is off.",
+      "fields": {
+        "device_id": {
+          "name": "Table",
+          "description": "Drift table. Needed only when more than one table is set up."
+        },
+        "prompt": {
+          "name": "Prompt",
+          "description": "What to draw, in a few words."
+        },
+        "name": {
+          "name": "Name",
+          "description": "Name in the Pattern list. Defaults to the prompt."
+        },
+        "play": {
+          "name": "Play",
+          "description": "Start the drawing when Power is on."
+        }
+      }
+    },
+    "generate_pattern": {
+      "name": "Generate pattern",
+      "description": "Upload a built-in spiral, rose, star, wave, or spirograph. No assistant is used.",
+      "fields": {
+        "device_id": {
+          "name": "Table",
+          "description": "Drift table. Needed only when more than one table is set up."
+        },
+        "type": {
+          "name": "Type",
+          "description": "spiral, rose, star, wave, or spirograph."
+        },
+        "name": {
+          "name": "Name",
+          "description": "Name in the Pattern list. Defaults to the type."
+        },
+        "play": {
+          "name": "Play",
+          "description": "Start the drawing when Power is on."
+        },
+        "turns": {
+          "name": "Turns",
+          "description": "Spiral turns, from 1 to 40."
+        },
+        "petals": {
+          "name": "Petals",
+          "description": "Rose petals, from 2 to 12."
+        },
+        "points": {
+          "name": "Points",
+          "description": "Star points, from 3 to 12."
+        },
+        "waves": {
+          "name": "Waves",
+          "description": "Wave count, from 1 to 24."
+        },
+        "loops": {
+          "name": "Loops",
+          "description": "Spirograph loops, from 1 to 12."
+        },
+        "outer": {
+          "name": "Outer radius",
+          "description": "Spirograph fixed radius."
+        },
+        "inner": {
+          "name": "Inner radius",
+          "description": "Spirograph rolling radius. Must be smaller than the outer radius."
+        },
+        "pen": {
+          "name": "Pen offset",
+          "description": "Spirograph pen distance."
         }
       }
     }
