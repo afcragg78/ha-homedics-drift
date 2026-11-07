@@ -7,6 +7,7 @@ import math
 import pytest
 
 from custom_components.homedics_drift.drawing import (
+    choose_drawing_assistant,
     generated_thr,
     generate_points,
     model_text,
@@ -20,6 +21,60 @@ from custom_components.homedics_drift.patterns import PatternRejected, parse_thr
 def _ends(text: str) -> tuple[float, float]:
     points = parse_thr(text)
     return points[0][1], points[-1][1]
+
+
+def test_ai_task_is_always_named_when_options_are_empty() -> None:
+    tasks = [
+        ("ai_task.openai", "unavailable"),
+        ("ai_task.google", "idle"),
+    ]
+    agents = [
+        ("conversation.home_assistant", "Home Assistant"),
+        ("conversation.openai", "OpenAI"),
+    ]
+    assert choose_drawing_assistant(
+        configured_task=None,
+        configured_agent=None,
+        preferred_task="ai_task.google",
+        task_states=tasks,
+        agents=agents,
+    ) == ("ai_task", "ai_task.google")
+    assert choose_drawing_assistant(
+        configured_task=None,
+        configured_agent=None,
+        preferred_task=None,
+        task_states=tasks,
+        agents=agents,
+    ) == ("ai_task", "ai_task.google")
+    assert choose_drawing_assistant(
+        configured_task="ai_task.custom",
+        configured_agent=None,
+        preferred_task="ai_task.google",
+        task_states=tasks,
+        agents=agents,
+    ) == ("ai_task", "ai_task.custom")
+    assert choose_drawing_assistant(
+        configured_task=None,
+        configured_agent=None,
+        preferred_task="ai_task.openai",
+        task_states=tasks,
+        agents=agents,
+    ) == ("ai_task", "ai_task.google")
+    assert choose_drawing_assistant(
+        configured_task=None,
+        configured_agent=None,
+        preferred_task="ai_task.openai",
+        task_states=[("ai_task.openai", "unavailable")],
+        agents=agents,
+    ) == ("conversation", "conversation.openai")
+    with pytest.raises(PatternRejected, match="No AI Task is available"):
+        choose_drawing_assistant(
+            configured_task=None,
+            configured_agent="conversation.home_assistant",
+            preferred_task=None,
+            task_states=[],
+            agents=[("conversation.home_assistant", "Home Assistant")],
+        )
 
 
 def test_model_json_becomes_a_valid_centre_to_rim_path() -> None:

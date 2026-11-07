@@ -37,7 +37,13 @@ from .const import (
     READY_TIMEOUT,
     WRITE_UUID,
 )
-from .drawing import build_instructions, generated_thr, model_text, path_from_model
+from .drawing import (
+    build_instructions,
+    choose_drawing_assistant,
+    generated_thr,
+    model_text,
+    path_from_model,
+)
 from .gallery import gallery_names, gallery_thr, random_gallery
 from .patterns import (
     STORAGE_CAP,
@@ -1055,18 +1061,56 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
             self.preview_at = datetime.now(timezone.utc)
             self._publish()
 
-    def ai_available(self) -> bool:
-        """True when Home Assistant has an AI Task or a conversation agent.
+    def _task_states(self) -> list[tuple[str, str]]:
+        states: list[tuple[str, str]] = []
+        for entity_id in self.hass.states.async_entity_ids("ai_task"):
+            state = self.hass.states.get(entity_id)
+            states.append((entity_id, state.state if state else "unavailable"))
+        return states
 
-        This integration does not store an API key. With neither service, drawing
-        from a prompt is unavailable and the button stays off.
-        """
+    def _conversation_agents(self) -> list[tuple[str, str]]:
+        try:
+            from homeassistant.components.conversation import async_get_agent_info
+        except ImportError:
+            return []
+        try:
+            infos = async_get_agent_info(self.hass)
+        except Exception:
+            return []
+        found: list[tuple[str, str]] = []
+        for info in infos or []:
+            agent_id = getattr(info, "id", None)
+            if not agent_id:
+                continue
+            found.append((str(agent_id), str(getattr(info, "name", None) or agent_id)))
+        return found
+
+    def _preferred_ai_task(self) -> str | None:
+        preferences = self.hass.data.get("ai_task_preferences")
+        entity_id = getattr(preferences, "gen_data_entity_id", None)
+        return str(entity_id) if entity_id else None
+
+    def drawing_assistant(self) -> tuple[str, str] | None:
+        """The explicit assistant for one drawing, or None when nothing can draw."""
         options = self.config_entry.options
-        if options.get(CONF_AI_TASK_ENTITY) or options.get(CONF_CONVERSATION_AGENT):
-            return True
-        return self.hass.services.has_service(
-            "ai_task", "generate_data"
-        ) or self.hass.services.has_service("conversation", "process")
+        try:
+            return choose_drawing_assistant(
+                configured_task=options.get(CONF_AI_TASK_ENTITY),
+                configured_agent=options.get(CONF_CONVERSATION_AGENT),
+                preferred_task=self._preferred_ai_task(),
+                task_states=self._task_states(),
+                agents=self._conversation_agents(),
+            )
+        except PatternRejected:
+            return None
+
+    def ai_available(self) -> bool:
+        """True when a real AI Task or an extra conversation agent can draw.
+
+        This integration does not store an API key. The button stays off when
+        nothing can be named explicitly.
+        """
+        return self.drawing_assistant() is not None
 
     def _set_ai(self, status: str, *, error: str = "", detail: str = "", name: str = "", pattern_id: int | None = None) -> None:
         self.ai_status = status
@@ -1078,36 +1122,38 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         self._publish()
 
     async def _ask_once(self, prompt: str) -> str:
-        """One model call. AI Task is preferred. Conversation is only a fallback."""
-        if not self.ai_available():
-            raise HomeAssistantError(
-                "Set up an AI Task or a conversation agent in Home Assistant to draw from a prompt"
+        """One model call. The entity or agent is always named explicitly."""
+        try:
+            kind, target = choose_drawing_assistant(
+                configured_task=self.config_entry.options.get(CONF_AI_TASK_ENTITY),
+                configured_agent=self.config_entry.options.get(CONF_CONVERSATION_AGENT),
+                preferred_task=self._preferred_ai_task(),
+                task_states=self._task_states(),
+                agents=self._conversation_agents(),
             )
+        except PatternRejected as err:
+            raise HomeAssistantError(err.message) from err
         instructions = build_instructions(prompt)
-        options = self.config_entry.options
-        entity = options.get(CONF_AI_TASK_ENTITY) or None
-        agent = options.get(CONF_CONVERSATION_AGENT) or None
-        use_task = bool(entity) or (
-            self.hass.services.has_service("ai_task", "generate_data") and not agent
-        )
-        if use_task and self.hass.services.has_service("ai_task", "generate_data"):
-            data: dict[str, object] = {
-                "task_name": "Drift sand drawing",
-                "instructions": instructions,
-                "structure": {
-                    "path": {
-                        "description": "JSON list of [x, y] pairs between -1 and 1",
-                        "selector": {"text": {"multiline": True}},
-                    }
-                },
-            }
-            if entity:
-                data["entity_id"] = entity
+        if kind == "ai_task":
+            if not self.hass.services.has_service("ai_task", "generate_data"):
+                raise HomeAssistantError(
+                    "Home Assistant has an AI Task entity but the AI Task service is not ready"
+                )
             try:
                 result = await self.hass.services.async_call(
                     "ai_task",
                     "generate_data",
-                    data,
+                    {
+                        "task_name": "Drift sand drawing",
+                        "instructions": instructions,
+                        "entity_id": target,
+                        "structure": {
+                            "path": {
+                                "description": "JSON list of [x, y] pairs between -1 and 1",
+                                "selector": {"text": {"multiline": True}},
+                            }
+                        },
+                    },
                     blocking=True,
                     return_response=True,
                 )
@@ -1118,16 +1164,13 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
             return model_text(result)
         if not self.hass.services.has_service("conversation", "process"):
             raise HomeAssistantError(
-                "Set up an AI Task or a conversation agent in Home Assistant to draw from a prompt"
+                "No AI Task is available, and the conversation service is not ready"
             )
-        service_data: dict[str, object] = {"text": instructions}
-        if agent:
-            service_data["agent_id"] = agent
         try:
             result = await self.hass.services.async_call(
                 "conversation",
                 "process",
-                service_data,
+                {"text": instructions, "agent_id": target},
                 blocking=True,
                 return_response=True,
             )

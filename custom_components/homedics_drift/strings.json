@@ -15,7 +15,8 @@
       "already_configured": "This Drift table is already configured.",
       "already_in_progress": "This Drift table is already being configured.",
       "no_devices_found": "No HoMedics Drift tables were found. Plug the table in, bring a Bluetooth adapter or ESPHome proxy closer, and try again.",
-      "not_supported": "This Bluetooth device is not a HoMedics Drift table."
+      "not_supported": "This Bluetooth device is not a HoMedics Drift table.",
+      "no_ai": "No AI Task entities were found. Add an AI integration in Home Assistant, then open these options again."
     }
   },
   "entity": {
@@ -125,7 +126,7 @@
     "step": {
       "init": {
         "title": "AI drawing",
-        "description": "Optional. Choose the AI Task entity Home Assistant should use for one drawing. Leave both empty to use the default assistant when one is installed. No API key is stored here.",
+        "description": "Pick an AI Task from the list. Each row is the assistant's name and its entity id. Leave it empty to use Home Assistant's preferred AI Task, or the first one that is online. No API key is stored here.",
         "data": {
           "ai_task_entity": "AI Task entity",
           "conversation_agent": "Conversation agent"

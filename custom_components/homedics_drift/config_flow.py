@@ -19,6 +19,38 @@ from .const import CONF_AI_TASK_ENTITY, CONF_CONVERSATION_AGENT, DOMAIN
 from .protocol import is_drift_name, normalize_advertised_name
 
 
+def _ai_task_dropdown(hass: Any) -> list[dict[str, str]]:
+    """Every AI Task entity, named so the dropdown is obvious."""
+    options: list[dict[str, str]] = []
+    for entity_id in sorted(hass.states.async_entity_ids("ai_task")):
+        state = hass.states.get(entity_id)
+        friendly = getattr(state, "name", None) or entity_id
+        if state is None or state.state == "unavailable":
+            friendly = f"{friendly} (unavailable)"
+        options.append({"value": entity_id, "label": f"{friendly} — {entity_id}"})
+    return options
+
+
+def _conversation_agent_dropdown(hass: Any) -> list[dict[str, str]]:
+    """Conversation agents other than the built-in one, which cannot draw."""
+    try:
+        from homeassistant.components.conversation import async_get_agent_info
+    except ImportError:
+        return []
+    try:
+        infos = async_get_agent_info(hass)
+    except Exception:
+        return []
+    options: list[dict[str, str]] = []
+    for info in infos or []:
+        agent_id = getattr(info, "id", None)
+        if not agent_id or agent_id in {"conversation.home_assistant", "homeassistant"}:
+            continue
+        name = getattr(info, "name", None) or agent_id
+        options.append({"value": str(agent_id), "label": f"{name} — {agent_id}"})
+    return options
+
+
 def _drift_name(discovery: BluetoothServiceInfoBleak) -> str | None:
     """Return the trimmed KS name, checking the fields proxies actually fill."""
     advertisement = getattr(discovery, "advertisement", None)
@@ -48,23 +80,44 @@ class DriftOptionsFlow(OptionsFlow):
             }
             return self.async_create_entry(title="", data=cleaned)
         current = self.config_entry.options
-        return self.async_show_form(
-            step_id="init",
-            data_schema=vol.Schema(
+        task_options = _ai_task_dropdown(self.hass)
+        agent_options = _conversation_agent_dropdown(self.hass)
+        schema: dict[Any, Any] = {}
+        if task_options:
+            schema[
+                vol.Optional(
+                    CONF_AI_TASK_ENTITY,
+                    description={"suggested_value": current.get(CONF_AI_TASK_ENTITY, "")},
+                )
+            ] = selector.selector(
                 {
-                    vol.Optional(
-                        CONF_AI_TASK_ENTITY,
-                        description={"suggested_value": current.get(CONF_AI_TASK_ENTITY, "")},
-                    ): selector.selector({"entity": {"domain": "ai_task"}}),
-                    vol.Optional(
-                        CONF_CONVERSATION_AGENT,
-                        description={
-                            "suggested_value": current.get(CONF_CONVERSATION_AGENT, "")
-                        },
-                    ): selector.selector({"conversation_agent": {}}),
+                    "select": {
+                        "options": task_options,
+                        "mode": "dropdown",
+                        "custom_value": False,
+                    }
                 }
-            ),
-        )
+            )
+        if agent_options:
+            schema[
+                vol.Optional(
+                    CONF_CONVERSATION_AGENT,
+                    description={
+                        "suggested_value": current.get(CONF_CONVERSATION_AGENT, "")
+                    },
+                )
+            ] = selector.selector(
+                {
+                    "select": {
+                        "options": agent_options,
+                        "mode": "dropdown",
+                        "custom_value": False,
+                    }
+                }
+            )
+        if not schema:
+            return self.async_abort(reason="no_ai")
+        return self.async_show_form(step_id="init", data_schema=vol.Schema(schema))
 
 
 class DriftConfigFlow(ConfigFlow, domain=DOMAIN):
