@@ -15,7 +15,12 @@ from homeassistant.config_entries import ConfigFlow, ConfigFlowResult, OptionsFl
 from homeassistant.const import CONF_ADDRESS
 from homeassistant.helpers import selector
 
-from .const import CONF_AI_TASK_ENTITY, CONF_CONVERSATION_AGENT, DOMAIN
+from .const import (
+    CONF_AI_TASK_ENTITY,
+    CONF_CLEAN_BEFORE_AI,
+    CONF_CONVERSATION_AGENT,
+    DOMAIN,
+)
 from .protocol import is_drift_name, normalize_advertised_name
 
 
@@ -73,16 +78,23 @@ class DriftOptionsFlow(OptionsFlow):
     ) -> ConfigFlowResult:
         """Choose which assistant draws a prompt, if the user has one."""
         if user_input is not None:
-            cleaned = {
-                key: value
-                for key, value in user_input.items()
-                if isinstance(value, str) and value.strip()
+            cleaned: dict[str, Any] = {
+                CONF_CLEAN_BEFORE_AI: bool(user_input.get(CONF_CLEAN_BEFORE_AI, True))
             }
+            for key in (CONF_AI_TASK_ENTITY, CONF_CONVERSATION_AGENT):
+                value = user_input.get(key, self.config_entry.options.get(key))
+                if isinstance(value, str) and value.strip():
+                    cleaned[key] = value.strip()
             return self.async_create_entry(title="", data=cleaned)
         current = self.config_entry.options
         task_options = _ai_task_dropdown(self.hass)
         agent_options = _conversation_agent_dropdown(self.hass)
-        schema: dict[Any, Any] = {}
+        schema: dict[Any, Any] = {
+            vol.Required(
+                CONF_CLEAN_BEFORE_AI,
+                default=current.get(CONF_CLEAN_BEFORE_AI, True),
+            ): selector.selector({"boolean": {}})
+        }
         if task_options:
             schema[
                 vol.Optional(
@@ -115,8 +127,6 @@ class DriftOptionsFlow(OptionsFlow):
                     }
                 }
             )
-        if not schema:
-            return self.async_abort(reason="no_ai")
         return self.async_show_form(step_id="init", data_schema=vol.Schema(schema))
 
 

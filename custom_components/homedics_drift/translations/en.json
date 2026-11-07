@@ -129,7 +129,8 @@
         "description": "Pick an AI Task from the list. Each row is the assistant's name and its entity id. Leave it empty to use Home Assistant's preferred AI Task, or the first one that is online. No API key is stored here.",
         "data": {
           "ai_task_entity": "AI Task entity",
-          "conversation_agent": "Conversation agent"
+          "conversation_agent": "Conversation agent",
+          "clean_before_ai": "Clean before AI drawings"
         }
       }
     }

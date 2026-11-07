@@ -88,6 +88,18 @@ class UploadTicks:
         return marks
 
 
+def clean_before_ai_drawing(option: object, *, play: bool, power_on: bool) -> bool:
+    """AI drawings wipe first when Power is on, unless the option is turned off.
+
+    A missing option means on. The separate Clean before pattern switch is ignored.
+    """
+    if not play or not power_on:
+        return False
+    if option is False or option == "false":
+        return False
+    return True
+
+
 def feedback_text(
     stage: str,
     *,
@@ -101,6 +113,8 @@ def feedback_text(
     """The sentence shown for one stage of a drawing or gallery send."""
     if stage == "drawing":
         return f'Drawing "{prompt}" with {assistant}…'
+    if stage == "cleaning":
+        return "Cleaning sand…"
     if stage == "uploading":
         return f"Uploading to table… {percent}%"
     if stage == "done":

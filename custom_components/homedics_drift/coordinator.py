@@ -30,6 +30,7 @@ from .const import (
     BACKOFF_MAX,
     BACKOFF_START,
     CONF_AI_TASK_ENTITY,
+    CONF_CLEAN_BEFORE_AI,
     CONF_CONVERSATION_AGENT,
     DOMAIN,
     NOTIFY_UUID,
@@ -41,6 +42,7 @@ from .drawing import (
     build_instructions,
     UploadTicks,
     choose_drawing_assistant,
+    clean_before_ai_drawing,
     feedback_text,
     generated_thr,
     model_text,
@@ -1015,30 +1017,29 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
             await self.async_send(draw_pattern(pattern_id))
             self._replace(pattern_id=pattern_id, status=1)
 
-    async def _play_after_clean(self, token: int, pattern_id: int, clean_id: int) -> None:
-        """After the wipe finishes, play the pattern the user picked.
+    async def _wait_until_clean_done(self, token: int, clean_id: int) -> bool:
+        """Wait until the wipe has been seen drawing and then goes idle.
 
-        This watches state the table already sends. It does not poll. Turning
-        power off, or picking another pattern, cancels it.
+        Status is already pushed by the table. Turning Power off cancels the wait.
         """
         seen = False
         deadline = asyncio.get_running_loop().time() + 20 * 60
         while asyncio.get_running_loop().time() < deadline:
             if token != self._clean_follow or not self.session_on:
-                return
+                return False
             data = self.data
             if data is not None and data.pattern_id == clean_id and data.drawing:
                 seen = True
             if seen and data is not None and not data.drawing:
-                break
+                return True
             await asyncio.sleep(0.5)
-        else:
+        return False
+
+    async def _play_after_clean(self, token: int, pattern_id: int, clean_id: int) -> None:
+        """After the wipe finishes, play the pattern the user picked."""
+        if not await self._wait_until_clean_done(token, clean_id):
             return
-        async with self._command_lock:
-            if token != self._clean_follow or not self.session_on:
-                return
-            await self.async_send(draw_pattern(pattern_id))
-            self._replace(pattern_id=pattern_id, status=1)
+        await self._play_if_on(pattern_id, True)
 
     async def async_set_clean_before(self, enabled: bool) -> None:
         """Remember whether a new pattern should wipe the sand first."""
@@ -1302,7 +1303,32 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
                 source="ai",
                 progress=lambda done, total: self._note_upload(done, total, title),
             )
-            playing = await self._play_if_on(pattern_id, play)
+            playing = False
+            if clean_before_ai_drawing(
+                self.config_entry.options.get(CONF_CLEAN_BEFORE_AI, True),
+                play=play,
+                power_on=self.session_on,
+            ):
+                self._announce(
+                    "cleaning",
+                    prompt=cleaned,
+                    assistant=assistant,
+                    name=title,
+                )
+                clean_id = await self._ensure_clean_id()
+                if self.session_on and clean_id != pattern_id:
+                    self._clean_follow += 1
+                    token = self._clean_follow
+                    async with self._command_lock:
+                        if self.session_on:
+                            await self.async_send(draw_pattern(clean_id))
+                            self._replace(pattern_id=clean_id, status=1)
+                    if await self._wait_until_clean_done(token, clean_id):
+                        playing = await self._play_if_on(pattern_id, True)
+                else:
+                    playing = await self._play_if_on(pattern_id, True)
+            else:
+                playing = await self._play_if_on(pattern_id, play)
             detail = "" if playing or not play else "Power is off, so the pattern was saved but not played"
             self._set_ai("stored", detail=detail, name=title, pattern_id=pattern_id)
             self._announce("done", name=title, playing=playing, prompt=cleaned, assistant=assistant)

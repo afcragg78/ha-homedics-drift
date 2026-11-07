@@ -9,6 +9,7 @@ import pytest
 from custom_components.homedics_drift.drawing import (
     UploadTicks,
     choose_drawing_assistant,
+    clean_before_ai_drawing,
     feedback_text,
     generated_thr,
     generate_points,
@@ -77,6 +78,15 @@ def test_ai_task_is_always_named_when_options_are_empty() -> None:
             task_states=[],
             agents=[("conversation.home_assistant", "Home Assistant")],
         )
+
+
+def test_ai_drawings_clean_first_only_while_power_is_on() -> None:
+    assert clean_before_ai_drawing(None, play=True, power_on=True) is True
+    assert clean_before_ai_drawing(True, play=True, power_on=True) is True
+    assert clean_before_ai_drawing(False, play=True, power_on=True) is False
+    assert clean_before_ai_drawing(True, play=True, power_on=False) is False
+    assert clean_before_ai_drawing(True, play=False, power_on=True) is False
+    assert feedback_text("cleaning") == "Cleaning sand…"
 
 
 def test_upload_feedback_steps_about_every_ten_percent() -> None:
