@@ -130,7 +130,8 @@
         "data": {
           "ai_task_entity": "AI Task entity",
           "conversation_agent": "Conversation agent",
-          "clean_before_ai": "Clean before AI drawings"
+          "clean_before_ai": "Clean before AI drawings",
+          "ai_art_style": "AI art style"
         }
       }
     }
@@ -213,6 +214,10 @@
         "play": {
           "name": "Play",
           "description": "Start the drawing when Power is on."
+        },
+        "style": {
+          "name": "AI art style",
+          "description": "Contours or spiral shading when the assistant can make a picture. Line drawing echoes a point list. A text-only assistant always echoes the line."
         }
       }
     },
