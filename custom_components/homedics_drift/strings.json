@@ -91,6 +91,10 @@
       "name": "Upload pattern",
       "description": "Store a Sandify .thr pattern on the table under a name.",
       "fields": {
+        "device_id": {
+          "name": "Table",
+          "description": "Drift table. Needed only when more than one table is set up."
+        },
         "name": {
           "name": "Name",
           "description": "Name to show in the Pattern select."
@@ -109,6 +113,10 @@
       "name": "Delete pattern",
       "description": "Delete a pattern uploaded from Home Assistant. Stock patterns and the one that is drawing are refused.",
       "fields": {
+        "device_id": {
+          "name": "Table",
+          "description": "Drift table. Needed only when more than one table is set up."
+        },
         "pattern_id": {
           "name": "Pattern id",
           "description": "Id at or above 50000."
@@ -123,6 +131,10 @@
       "name": "Rename pattern",
       "description": "Remember a display name for a pattern id, including a stock id. The table is not changed.",
       "fields": {
+        "device_id": {
+          "name": "Table",
+          "description": "Drift table. Needed only when more than one table is set up."
+        },
         "pattern_id": {
           "name": "Pattern id",
           "description": "Id reported by the table."
