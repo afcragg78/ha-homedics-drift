@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.2.2
+
+- The Pattern, Playlist, Favorites, and Folder Pattern dropdowns in the card's Table section list their choices again. They opened as an empty strip before.
+
 ## 1.2.1
 
 - The table reconnects on its own after the Bluetooth link drops. The wait starts near 2 seconds, doubles, and stops at 60 seconds.

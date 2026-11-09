@@ -259,11 +259,7 @@ class DriftTableCard extends HTMLElement {
   }
 
   _select(label) {
-    if (hasElement("ha-select")) {
-      const el = document.createElement("ha-select");
-      el.label = label;
-      return el;
-    }
+    // A plain select: ha-select opened as an empty strip when given string options.
     const el = document.createElement("select");
     el.setAttribute("aria-label", label);
     return el;
@@ -415,6 +411,7 @@ class DriftTableCard extends HTMLElement {
         .choice { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
         .choice-label { width: 7rem; flex: none; font-weight: 500; }
         .choice ha-select, .choice select { flex: 1; min-width: 0; width: 100%; font: inherit; color: var(--primary-text-color); background: transparent; border: none; border-bottom: 1px solid var(--divider-color); border-radius: 0; padding: 8px 0; }
+        .choice select option { color: var(--primary-text-color); background: var(--card-background-color, var(--primary-background-color)); }
         .tabs { display: flex; gap: 4px; overflow-x: auto; margin-bottom: 8px; }
         .tabs button { white-space: nowrap; color: var(--secondary-text-color); background: transparent; }
         .tabs button.active { color: var(--primary-color); box-shadow: inset 0 -2px 0 var(--primary-color); }
@@ -514,7 +511,7 @@ class DriftTableCard extends HTMLElement {
       name.textContent = label;
       const select = this._select(label);
       row.append(select);
-      if (!hasElement("ha-select")) row.insertBefore(name, select);
+      row.insertBefore(name, select);
       if (plays) {
         const play = this._action("Play");
         play.classList.add("play");

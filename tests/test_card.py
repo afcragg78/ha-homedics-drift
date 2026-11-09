@@ -38,7 +38,6 @@ def test_card_uses_theme_variables_and_optional_styles() -> None:
         "ha-control-slider",
         "ha-slider",
         "ha-switch",
-        "ha-select",
         "ha-textfield",
         "ha-button",
         "ha-expansion-panel",
