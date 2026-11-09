@@ -21,7 +21,7 @@ Home Assistant custom integration for the Bluetooth HoMedics Drift sand tables. 
 
 The card shows the sand, the pattern name, progress, Power, previous, play or pause, next, Stop After, the light, and speed. Everything else is under **More**: patterns and playlists already on the table, the gallery, drawing, import, light color, Clean Sand, and storage.
 
-**Picture to Sand** is in Create. Choose **Contours** or **Line Drawing**, type a prompt, or press **Upload Photo**. Contours wrap the subject in echo lines that fill the circle. **Mazes & Fills** and the tiger, koi, lotus, wave, and owl studies are in the gallery.
+**Picture to Sand** is in Create. Choose **Contours** or **Line Drawing**, type a prompt, or press **Upload Photo**. Contours wrap the subject in echo lines that fill the circle. **Mazes & Fills** and the tiger, koi, lotus, and owl studies are in the gallery.
 
 If a button cannot run, the card says so in a sentence. It does not show a stack trace, and it never calls a service without an entity or a device.
 

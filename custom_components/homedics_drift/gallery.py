@@ -676,13 +676,9 @@ GALLERY: tuple[GalleryDesign, ...] = (
     GalleryDesign("Hilbert Fill", "maze:hilbert", "Mazes & Fills"),
     GalleryDesign("Fine Hilbert", "maze:fine-hilbert", "Mazes & Fills"),
     GalleryDesign("Peano Fill", "maze:peano", "Mazes & Fills"),
-    GalleryDesign("Square Spiral", "maze:square-spiral", "Mazes & Fills"),
-    GalleryDesign("Meander", "maze:meander", "Mazes & Fills"),
-    GalleryDesign("Cross Fill", "maze:cross", "Mazes & Fills"),
     GalleryDesign("Tiger Study", "study:tiger", "Contours"),
     GalleryDesign("Koi Study", "study:koi", "Contours"),
     GalleryDesign("Lotus Study", "study:lotus", "Contours"),
-    GalleryDesign("Wave Study", "study:wave", "Contours"),
     GalleryDesign("Owl Study", "study:owl", "Contours"),
     *(
         GalleryDesign(name, f"sisyphus:{key}", "Sisyphus Classics")
