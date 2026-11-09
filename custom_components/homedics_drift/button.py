@@ -6,6 +6,7 @@ from typing import override
 
 from homeassistant.components.button import ButtonEntity
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .coordinator import DriftConfigEntry, DriftCoordinator
@@ -27,6 +28,7 @@ async def async_setup_entry(
             DriftAiDrawButton(coordinator),
             DriftSendGalleryButton(coordinator),
             DriftRandomGalleryButton(coordinator),
+            DriftReconnectButton(coordinator),
         ]
     )
 
@@ -152,3 +154,26 @@ class DriftRandomGalleryButton(DriftEntity, ButtonEntity):
     async def async_press(self) -> None:
         """Pick a design, vary it, and play only while Power is on."""
         await self.coordinator.async_random_gallery()
+
+
+class DriftReconnectButton(DriftEntity, ButtonEntity):
+    """Ask for a new Bluetooth session. Available while the table is gone."""
+
+    _attr_translation_key = "reconnect"
+    _attr_icon = "mdi:bluetooth-connect"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
+
+    def __init__(self, coordinator: DriftCoordinator) -> None:
+        """Identify the button."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}-reconnect"
+
+    @property
+    def available(self) -> bool:
+        """Pressing this is how a dropped table is asked to come back."""
+        return True
+
+    @override
+    async def async_press(self) -> None:
+        """Wake the reconnect loop, or drop a stuck link so it can start again."""
+        self.coordinator.request_reconnect()

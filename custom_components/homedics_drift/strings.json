@@ -91,6 +91,11 @@
         "name": "Favorite"
       }
     },
+    "binary_sensor": {
+      "connected": {
+        "name": "Connected"
+      }
+    },
     "button": {
       "refresh_patterns": {
         "name": "Refresh pattern folder"
@@ -109,6 +114,9 @@
       },
       "random_gallery": {
         "name": "Random design"
+      },
+      "reconnect": {
+        "name": "Reconnect"
       }
     },
     "image": {

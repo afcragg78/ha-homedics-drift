@@ -19,6 +19,11 @@ from bleak_retry_connector import (
 )
 
 from homeassistant.components import bluetooth
+from homeassistant.components.bluetooth import (
+    BluetoothCallbackMatcher,
+    BluetoothScanningMode,
+    async_register_callback,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
@@ -28,7 +33,6 @@ from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .const import (
-    BACKOFF_MAX,
     BACKOFF_START,
     CONF_AI_TASK_ENTITY,
     CONF_CLEAN_BEFORE_AI,
@@ -78,6 +82,7 @@ from .patterns import (
     wire_point,
 )
 from .preview import render_thr
+from .reconnect import DISCONNECTED_MESSAGE, LinkWatch
 from .protocol import (
     CMD_PLAYLIST_LIST,
     DriftState,
@@ -180,6 +185,10 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         self._out: asyncio.Queue[tuple[Packet, asyncio.Future[None] | None]] | None = None
         self._ready = asyncio.Event()
         self._disconnected = asyncio.Event()
+        self._retry_now = asyncio.Event()
+        self._watch = LinkWatch()
+        self._link_resumed = False
+        self._ble_unsub: Any = None
         self._stopping = False
         self._shut_down = False
         self._task: asyncio.Task[None] | None = None
@@ -192,6 +201,7 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
             self._run(),
             name=f"{DOMAIN}-{self.address}",
         )
+        self._watch_advertisements()
         self._inbox_unsub = async_track_time_interval(
             self.hass, self._scan_inbox, timedelta(seconds=120)
         )
@@ -204,6 +214,7 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         self._shut_down = True
         self._stopping = True
         self._disconnected.set()
+        self._retry_now.set()
         self._ready.set()
         task = self._task
         self._task = None
@@ -212,6 +223,9 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         if self._inbox_unsub is not None:
             self._inbox_unsub()
             self._inbox_unsub = None
+        if self._ble_unsub is not None:
+            self._ble_unsub()
+            self._ble_unsub = None
         for job in (task, power_worker):
             if job is not None and job is not asyncio.current_task() and not job.done():
                 job.cancel()
@@ -221,23 +235,102 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         await super().async_shutdown()
 
     async def _run(self) -> None:
-        backoff = BACKOFF_START
+        """Connect, and after a drop wait with backoff. One attempt at a time."""
         try:
             while not self._stopping:
+                if not self._watch.begin():
+                    await self._wait_before_retry(BACKOFF_START)
+                    continue
                 try:
                     await self._session()
-                    backoff = BACKOFF_START
                 except asyncio.CancelledError:
+                    self._watch.busy = False
                     raise
-                except Exception as err:  # Bleak and link errors must not kill the loop.
-                    _LOGGER.debug("Drift %s session ended: %s", self.address, err)
-                    self.async_set_update_error(err)
+                except Exception as err:
+                    # Bleak and link errors must not kill the loop or spam the log.
+                    delay = self._watch.mark_down()
+                    self._note_unavailable(err, delay)
+                else:
+                    delay = self._watch.mark_down()
+                    self._note_unavailable(ConnectionError("Drift disconnected"), delay)
                 if self._stopping:
                     break
-                await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, BACKOFF_MAX)
+                await self._wait_before_retry(delay)
         finally:
+            self._watch.busy = False
+            self._watch.connected = False
             await self._disconnect_client()
+
+    def _note_unavailable(self, err: Exception, delay: float) -> None:
+        """Mark entities unavailable once. Later retries stay at debug."""
+        if self.last_update_success or self._watch.attempt == 1:
+            _LOGGER.info(
+                "Drift %s is disconnected (%s). Retrying in %.0fs",
+                self.address,
+                err,
+                delay,
+            )
+        else:
+            _LOGGER.debug(
+                "Drift %s still disconnected (%s). Retrying in %.0fs",
+                self.address,
+                err,
+                delay,
+            )
+        if self.last_update_success:
+            self.last_update_success = False
+            self.async_update_listeners()
+
+    async def _wait_before_retry(self, delay: float) -> None:
+        """Sleep, unless an advertisement or a command asks to try now."""
+        self._retry_now.clear()
+        if self._watch.take_wake():
+            _LOGGER.debug("Drift %s reconnecting now", self.address)
+            return
+        try:
+            await asyncio.wait_for(self._retry_now.wait(), timeout=delay)
+        except TimeoutError:
+            return
+        self._watch.take_wake()
+        _LOGGER.debug("Drift %s reconnecting after an advertisement or command", self.address)
+
+    def _watch_advertisements(self) -> None:
+        """A fresh advert for this address skips the rest of the backoff."""
+        if self._ble_unsub is not None:
+            return
+        self._ble_unsub = async_register_callback(
+            self.hass,
+            self._on_advertisement,
+            BluetoothCallbackMatcher(address=self.address, connectable=True),
+            BluetoothScanningMode.ACTIVE,
+        )
+
+    def _on_advertisement(self, _service_info: Any, _change: Any) -> None:
+        if self._stopping or not self._watch.advertisement():
+            return
+        _LOGGER.debug("Drift %s advertised; reconnecting", self.address)
+        self._retry_now.set()
+
+    def request_reconnect(self) -> None:
+        """Drop a stuck link, or wake the waiter. Safe to press more than once."""
+        if self._shut_down:
+            return
+        _LOGGER.info("Drift %s reconnect requested", self.address)
+        if self._watch.connected:
+            self._disconnected.set()
+            return
+        self._ask_reconnect()
+
+    def _ask_reconnect(self) -> None:
+        if self._stopping or self._watch.connected or self._watch.busy:
+            return
+        self._watch.wake = True
+        self._retry_now.set()
+
+    @property
+    def connected(self) -> bool:
+        """True while the GATT link for this table is up."""
+        return self._watch.connected
 
     async def _session(self) -> None:
         device = bluetooth.async_ble_device_from_address(
@@ -262,6 +355,9 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
             ble_device_callback=self._fresh_device,
         )
         self._client = client
+        self._watch.mark_up()
+        self._link_resumed = False
+        self.async_update_listeners()
         writer = asyncio.create_task(self._writer(), name=f"{DOMAIN}-write-{self.address}")
         try:
             await client.start_notify(NOTIFY_UUID, self._on_notify)
@@ -270,16 +366,13 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
             raise ConnectionError("Drift disconnected")
         finally:
             self._ready.clear()
+            self._watch.connected = False
             self._client = None
             writer.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await writer
             self._out = None
-            with contextlib.suppress(Exception):
-                if client.is_connected:
-                    await client.stop_notify(NOTIFY_UUID)
-            with contextlib.suppress(Exception):
-                await client.disconnect()
+            await self._quiet_disconnect(client)
 
     def _fresh_device(self) -> BLEDevice:
         device = bluetooth.async_ble_device_from_address(
@@ -292,7 +385,24 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         return self._device
 
     def _on_disconnect(self, _client: BleakClientWithServiceCache) -> None:
-        self.hass.loop.call_soon_threadsafe(self._disconnected.set)
+        """Bleak calls this off the loop when the table drops the link."""
+        loop = getattr(self.hass, "loop", None)
+        if loop is None or loop.is_closed():
+            return
+        loop.call_soon_threadsafe(self._bleak_disconnected)
+
+    def _bleak_disconnected(self) -> None:
+        """Unblock the session. The retry loop does the next connect."""
+        if self._watch.connected:
+            _LOGGER.info("Drift %s Bluetooth link dropped", self.address)
+        self._watch.connected = False
+        self._link_resumed = False
+        self._off_enforced = False
+        self._ready.clear()
+        if self.last_update_success:
+            self.last_update_success = False
+            self.async_update_listeners()
+        self._disconnected.set()
 
     def _on_notify(self, sender_or_data: Any, data: bytearray | None = None) -> None:
         payload = bytes(data if data is not None else sender_or_data)
@@ -338,7 +448,7 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
                 )
             self._ready.set()
             self._publish()
-            self._enforce_saved_off()
+            self._resume_saved_session()
             return
         if message.kind in (
             Kind.UPLOAD_MISSING,
@@ -438,7 +548,8 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
     def _enqueue(self, packet: Packet, future: asyncio.Future[None] | None) -> None:
         if self._out is None:
             if future is not None and not future.done():
-                future.set_exception(HomeAssistantError("Drift table is not connected"))
+                future.set_exception(HomeAssistantError(DISCONNECTED_MESSAGE))
+            self._ask_reconnect()
             return
         self._out.put_nowait((packet, future))
 
@@ -470,8 +581,9 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
 
     async def async_send(self, packet: Packet) -> None:
         """Send a user command once the handshake has finished."""
-        if self._shut_down:
-            raise HomeAssistantError("Drift table is not connected")
+        if self._shut_down or not self._watch.connected or self._client is None or self._out is None:
+            self._ask_reconnect()
+            raise HomeAssistantError(DISCONNECTED_MESSAGE)
         if not self._ready.is_set():
             try:
                 await asyncio.wait_for(self._ready.wait(), READY_TIMEOUT)
@@ -480,7 +592,8 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
                     "Drift table has not finished its handshake"
                 ) from err
         if self._shut_down or self._client is None or self._out is None:
-            raise HomeAssistantError("Drift table is not connected")
+            self._ask_reconnect()
+            raise HomeAssistantError(DISCONNECTED_MESSAGE)
         future: asyncio.Future[None] = self.hass.loop.create_future()
         self._enqueue(packet, future)
         await future
@@ -498,17 +611,27 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         self.session_on = bool(on)
         self._session_restored = True
         self.session_settled = True
+        self._link_resumed = False
         self._publish()
-        self._enforce_saved_off()
+        self._resume_saved_session()
 
     def _enforce_saved_off(self) -> None:
-        """After connect, make a restored off switch pause and extinguish once."""
-        if self._shut_down or not self._session_restored or self.session_on:
+        """After connect, apply the restored power switch once."""
+        self._resume_saved_session()
+
+    def _resume_saved_session(self) -> None:
+        """Put power, the lamp, and playback back after a handshake.
+
+        Off pauses and turns the lamp off. On restores the remembered lamp
+        and resumes when the ball is idle. Status packets do not choose this.
+        """
+        if self._shut_down or not self._session_restored or not self._ready.is_set():
             return
-        if not self._ready.is_set() or self._off_enforced:
+        if self._link_resumed:
             return
+        self._link_resumed = True
         self._off_enforced = True
-        self._power_queue.push(False)
+        self._power_queue.push(bool(self.session_on))
         self._ensure_power_worker()
 
     def _ensure_power_worker(self) -> None:
@@ -1672,8 +1795,19 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         self._client = None
         if client is None:
             return
-        with contextlib.suppress(Exception):
-            if client.is_connected:
-                await client.stop_notify(NOTIFY_UUID)
-        with contextlib.suppress(Exception):
-            await client.disconnect()
+        await self._quiet_disconnect(client)
+
+    async def _quiet_disconnect(self, client: BleakClientWithServiceCache) -> None:
+        """Close GATT without hanging the retry loop if the radio is already gone."""
+
+        async def _close() -> None:
+            with contextlib.suppress(Exception):
+                if client.is_connected:
+                    await client.stop_notify(NOTIFY_UUID)
+            with contextlib.suppress(Exception):
+                await client.disconnect()
+
+        try:
+            await asyncio.wait_for(_close(), timeout=8)
+        except TimeoutError:
+            _LOGGER.debug("Drift %s disconnect timed out", self.address)

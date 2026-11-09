@@ -127,10 +127,12 @@ One device per table. Entity names are prefixed with the table's Bluetooth name.
 | `sensor` Status | `drawing` or `idle` from the running-state status byte. Attributes include colour name, playlist id, random, loop, sleep, breathing, shifting, and the controller and driver versions. |
 | `sensor` Progress | Pattern progress. The wire value 0–10000 is shown as 0–100%. It does not advance while the ball travels to a pattern's first point, and it can still read 100% for a moment after the next pattern starts. |
 | `sensor` Pattern id | Numeric pattern id currently reported by the table. Idle is often id 0. |
+| `binary_sensor` Connected | Diagnostic. On while the Bluetooth link is up, and it stays available when the table is gone. |
+| `button` Reconnect | Diagnostic. Asks for a new session. If a link is stuck open, it drops that link so the retry can start. |
 
 State is pushed by the table about twice a second (`0x35/1`). The integration answers every table message with ConfirmData, answers the time request (`0x32/2`) with the local time, and answers the connection prompt (`0x50/1`) with confirm-connection. An acknowledgement from the table (the ack bit) gets ConfirmData and is never answered in kind, which is what avoids the time-packet loop. The session is ready after init complete (`0x4F/1`).
 
-If the table is unplugged or walks out of range, the entities become unavailable. The integration reconnects with backoff (2 seconds, doubling, capped at 60 seconds) and becomes available again after the next handshake. Notifications and writes are asynchronous and do not block Home Assistant's event loop.
+If the table is unplugged or walks out of range, the entities become unavailable. The Bluetooth disconnect callback ends the session, and the integration reconnects with backoff (about 2 seconds, doubling, capped at 60 seconds, with a little jitter). A fresh advertisement for that table skips the rest of the wait. A command while it is down is refused with "Drift table is not connected. Reconnecting." and asks for that same retry. Only one attempt runs at a time. After the handshake, Power, the lamp, and playback are put back the way they were. **Connected** (diagnostic) stays available and shows the link. **Reconnect** (diagnostic) asks for a new session. Notifications and writes are asynchronous and do not block Home Assistant's event loop.
 
 ## Drawing a new pattern
 
