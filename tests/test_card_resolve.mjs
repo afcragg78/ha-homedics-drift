@@ -84,3 +84,38 @@ const bySuffix = resolveDriftEntities(
 assert.equal(bySuffix.found.playlist, "select.table_playlist");
 assert.equal(bySuffix.found.inbox, "select.table_folder_pattern");
 assert.equal(bySuffix.found.stored, "select.table_pattern");
+
+function table(stem, deviceId) {
+  const row = (key) => ({ device_id: deviceId, platform: "homedics_drift", translation_key: key });
+  return {
+    [`media_player.${stem}_player`]: row("player"),
+    [`switch.${stem}_power`]: row("power"),
+    [`light.${stem}_light`]: row("lamp"),
+    [`select.${stem}_playlist`]: row("playlist"),
+    [`select.${stem}_pattern`]: row("pattern"),
+    [`sensor.${stem}_pattern_id`]: row("pattern"),
+  };
+}
+
+for (const stem of [
+  "living_room_ks2206011280_62_00_a1_20_99_74",
+  "living_room_drift_table",
+  "ks2206011280",
+]) {
+  const picked = resolveDriftEntities(table(stem, `device-${stem}`), {});
+  assert.equal(picked.deviceId, `device-${stem}`);
+  assert.equal(picked.found.player, `media_player.${stem}_player`);
+  assert.equal(picked.found.stored, `select.${stem}_pattern`);
+  assert.equal(picked.notice, null);
+}
+
+const two = {
+  ...table("living_room_drift_table", "one"),
+  ...table("kitchen_drift_table", "two"),
+};
+const ambiguous = resolveDriftEntities(two, {});
+assert.equal(ambiguous.deviceId, null);
+assert.match(ambiguous.notice, /more than one Drift table/);
+
+const empty = resolveDriftEntities({}, {});
+assert.match(empty.notice, /Add your Drift table/);

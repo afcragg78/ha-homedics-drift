@@ -7,6 +7,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 CARD = ROOT / "custom_components" / "homedics_drift" / "www" / "drift-table-card.js"
+RESOLVE = ROOT / "custom_components" / "homedics_drift" / "www" / "drift-table-resolve.js"
 
 
 def test_card_uses_theme_variables_and_optional_styles() -> None:
@@ -27,6 +28,10 @@ def test_card_uses_theme_variables_and_optional_styles() -> None:
     assert "path_known" in text
     assert "requestAnimationFrame" in text
     assert "could not find the Drift player" in text
+    assert "if (!data.entity_id && !data.device_id)" in text
+    resolve = RESOLVE.read_text(encoding="utf-8")
+    assert "Add your Drift table" in resolve
+    assert "more than one Drift table" in resolve
     assert "resolveDriftEntities" in text
     for piece in (
         "ha-icon-button",

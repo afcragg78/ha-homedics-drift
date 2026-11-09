@@ -6,6 +6,34 @@ Home Assistant custom integration for the Bluetooth HoMedics Drift sand tables. 
 
 **This project is unofficial and is not affiliated with, endorsed by, or supported by HoMedics.** It drives a motorized sand table over an undocumented Bluetooth protocol. Use it at your own risk. A bad or interrupted session can leave a drawing unfinished; it should not damage the table, but that is not a promise.
 
+## Quick start
+
+1. Install the integration from the Marketplace (the steps are further down).
+2. Plug in the table. When Home Assistant finds it, add **HoMedics Drift** and pick that table. A Bluetooth proxy has to be near the table. The official phone app cannot be connected at the same time.
+3. On the dashboard, choose **Add card** and pick **Drift Table**. If you have one table, that is the whole setup. The card finds it. If you have more than one, choose the device in the visual editor. No YAML is required.
+4. Turn **Power** on, then play.
+
+![Drift card, light theme](docs/drift-card-light.png)
+
+![Drift card, dark theme](docs/drift-card-dark.png)
+
+![Gallery](docs/gallery-contact-sheet.png)
+
+The card shows the sand, the pattern name, progress, Power, previous, play or pause, next, Stop After, the light, and speed. Everything else is under **More**: patterns and playlists already on the table, the gallery, drawing, import, light color, Clean Sand, and storage.
+
+If a button cannot run, the card says so in a sentence. It does not show a stack trace, and it never calls a service without an entity or a device.
+
+### The card still looks like an old version
+
+On the Home Assistant companion app: **Settings → Companion app → Debugging → Reset frontend cache**, then reopen the dashboard. In a browser, reload the page. The card is served as `drift-table-card.js?v=5`, so a cached copy is the usual cause.
+
+### The table never shows up
+
+- The proxy or the Bluetooth adapter has to be in the same room. Distance and walls drop the link.
+- Only one central can connect. Close the HoMedics app, then reload the device in Home Assistant.
+- Wi-Fi Drift models (11 inch and the cloud models) do not use this protocol.
+- After a drop, the integration retries on its own. **Reconnect** on the device page asks again.
+
 ## Credit
 
 All credit for the protocol goes to Josh Lannin's [Drifted](https://github.com/joshlannin/drifted) project. Drifted reverse-engineered how these Bluetooth sand tables speak, tested a generation-1 16" table, and published the handshake, packet format, failure modes, and the vectors in `spec/vectors/protocol.json`. Drifted is MIT licensed, copyright Altimix LLC.

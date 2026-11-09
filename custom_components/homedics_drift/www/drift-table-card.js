@@ -75,8 +75,12 @@ class DriftTableCard extends HTMLElement {
     const flag = (name, label) => ({ name, selector: { boolean: {} }, helper: label });
     return {
       schema: [
+        {
+          name: "device",
+          selector: { device: {} },
+          helper: "Pick the Drift device. With one table this can stay empty.",
+        },
         { name: "entity", selector: { entity: {} } },
-        { name: "device", selector: { device: {} } },
         {
           name: "style",
           selector: {
@@ -113,16 +117,13 @@ class DriftTableCard extends HTMLElement {
   }
 
   setConfig(config) {
-    if (!config || (!config.entity && !config.device && !config.device_id)) {
-      throw new Error("Choose a Drift entity or device");
-    }
-    this._config = config;
+    this._config = config || {};
     this._built = false;
   }
 
   set hass(hass) {
     this._hass = hass;
-    if (!this._config) return;
+    if (!this._config) this._config = {};
     this._ensure();
     this._update();
   }
@@ -172,8 +173,38 @@ class DriftTableCard extends HTMLElement {
 
   _call(domain, service, data) {
     if (!this._hass || !data) return;
-    if (!data.entity_id && !data.device_id) return;
-    this._hass.callService(domain, service, data);
+    if (!data.entity_id && !data.device_id) {
+      this._say("That control is not on this table yet.");
+      return;
+    }
+    const pending = this._hass.callService(domain, service, data);
+    if (pending && typeof pending.catch === "function") {
+      pending.catch((err) => this._say(this._friendly(err)));
+    }
+  }
+
+  _friendly(err) {
+    const raw = String((err && err.message) || err || "");
+    if (/not connected|reconnect/i.test(raw)) return "The table is not connected. It will try again on its own.";
+    if (/power is off/i.test(raw)) return "Turn Power on before drawing.";
+    if (!raw || raw.length > 160 || /Error|Exception|Traceback|object has no attribute/i.test(raw)) {
+      return "That did not work. Check that the table is on and in range.";
+    }
+    return raw;
+  }
+
+  _say(text) {
+    this._toast = text;
+    const note = this._card && this._card.querySelector(".missing");
+    if (note) {
+      note.hidden = false;
+      note.textContent = text;
+    }
+    clearTimeout(this._toastTimer);
+    this._toastTimer = setTimeout(() => {
+      this._toast = null;
+      if (this._hass) this._update();
+    }, 6000);
   }
 
   _action(label) {
@@ -689,7 +720,9 @@ class DriftTableCard extends HTMLElement {
           this._loadMine();
         })
         .catch((err) => {
-          note.textContent = (err && err.message) || "That link could not be imported.";
+          const text = this._friendly(err);
+          note.textContent = text;
+          this._say(text === "That did not work. Check that the table is on and in range." ? "That link could not be imported." : text);
         });
     });
     card.querySelector(".ai").addEventListener("click", () => {
@@ -767,7 +800,17 @@ class DriftTableCard extends HTMLElement {
     this._tiles = resolved.tiles;
     const card = this._card;
     const missing = card.querySelector(".missing");
-    if (missing) missing.hidden = Boolean(this._found.player);
+    if (missing) {
+      if (this._toast) {
+        missing.hidden = false;
+        missing.textContent = this._toast;
+      } else if (resolved.notice) {
+        missing.hidden = false;
+        missing.textContent = resolved.notice;
+      } else {
+        missing.hidden = true;
+      }
+    }
     card.querySelector(".stage-wrap").hidden = !this._shown("show_now");
     card.querySelector(".light-row").hidden = !this._shown("show_light");
     card.querySelector(".speed-row").hidden = !this._shown("show_speed");

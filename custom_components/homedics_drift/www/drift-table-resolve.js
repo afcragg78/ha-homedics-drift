@@ -88,12 +88,26 @@ function isGalleryTile(entityId, entry, role) {
   return true;
 }
 
+function driftDeviceIds(registry) {
+  const ids = [];
+  Object.keys(registry).forEach((id) => {
+    const entry = registry[id] || {};
+    if (entry.platform === "homedics_drift" && entry.device_id && !ids.includes(entry.device_id)) {
+      ids.push(entry.device_id);
+    }
+  });
+  return ids;
+}
+
 export function resolveDriftEntities(entities, config) {
   const registry = entities || {};
+  const devices = driftDeviceIds(registry);
   let deviceId = (config && (config.device || config.device_id)) || null;
+  let notice = null;
   if (!deviceId && config && config.entity && registry[config.entity]) {
     deviceId = registry[config.entity].device_id || null;
   }
+  if (!deviceId && devices.length === 1) deviceId = devices[0];
   const found = {};
   const tiles = [];
   Object.keys(registry).forEach((id) => {
@@ -104,5 +118,12 @@ export function resolveDriftEntities(entities, config) {
     if (role && role !== "tile" && !found[role]) found[role] = id;
     if (isGalleryTile(id, entry, role)) tiles.push(id);
   });
-  return { deviceId, found, tiles };
+  if (!deviceId && devices.length === 0) {
+    notice = "Add your Drift table under Settings, then open this card again. With one table, you only pick the device.";
+  } else if (!deviceId) {
+    notice = "This home has more than one Drift table. Edit the card and choose the device.";
+  } else if (!found.player) {
+    notice = "This card could not find the Drift player. Set the card to that media player, or to the Drift device.";
+  }
+  return { deviceId, found, tiles, notice };
 }
