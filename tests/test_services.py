@@ -26,7 +26,7 @@ class _Services:
     def has_service(self, domain: str, service: str) -> bool:
         return (domain, service) in self._handlers
 
-    def async_register(self, domain: str, service: str, handler, schema=None) -> None:
+    def async_register(self, domain: str, service: str, handler, schema=None, **_kwargs) -> None:
         self._handlers[(domain, service)] = (handler, schema)
 
     async def async_call(self, domain: str, service: str, data: dict) -> None:
@@ -101,6 +101,11 @@ def _install_fakes() -> None:
     core = types.ModuleType("homeassistant.core")
     core.HomeAssistant = _Hass
     core.ServiceCall = _ServiceCall
+
+    class SupportsResponse:
+        OPTIONAL = "optional"
+
+    core.SupportsResponse = SupportsResponse
     exceptions = types.ModuleType("homeassistant.exceptions")
 
     class ServiceValidationError(Exception):

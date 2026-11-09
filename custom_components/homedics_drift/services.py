@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from homeassistant.core import HomeAssistant, ServiceCall
+from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.service import async_extract_config_entry_ids
@@ -145,16 +145,22 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         )
 
     hass.services.async_register(DOMAIN, SERVICE_GENERATE, _generate, schema=_GENERATE_SCHEMA)
-    async def _import(call: ServiceCall) -> None:
+    async def _import(call: ServiceCall) -> dict[str, object]:
         coordinator = await _coordinator(hass, call)
-        await coordinator.async_import_pattern_url(call.data["url"])
+        return await coordinator.async_import_pattern_url(call.data["url"])
 
     async def _favorite(call: ServiceCall) -> None:
         coordinator = await _coordinator(hass, call)
         await coordinator.async_set_favorite(call.data["name"], bool(call.data.get("favorite", True)))
 
     hass.services.async_register(DOMAIN, SERVICE_GALLERY, _gallery, schema=_GALLERY_SCHEMA)
-    hass.services.async_register(DOMAIN, SERVICE_IMPORT, _import, schema=_IMPORT_SCHEMA)
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_IMPORT,
+        _import,
+        schema=_IMPORT_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
     hass.services.async_register(DOMAIN, SERVICE_FAVORITE, _favorite, schema=_FAVORITE_SCHEMA)
 
 

@@ -15,6 +15,8 @@ const entities = {
   [`number.${stem}_speed`]: entry({ translation_key: "speed" }),
   [`button.${stem}_clean_sand`]: entry({ translation_key: "clean_sand" }),
   [`select.${stem}_gallery_design`]: entry({ translation_key: "gallery" }),
+  [`select.${stem}_pattern`]: entry({ translation_key: "pattern" }),
+  [`sensor.${stem}_pattern_id`]: entry({ translation_key: "pattern" }),
   [`select.${stem}_favorites`]: entry({ translation_key: "favorites" }),
   [`text.${stem}_ai_prompt`]: entry({ translation_key: "ai_prompt" }),
   [`sensor.${stem}_pattern_slots`]: entry(),
@@ -43,6 +45,7 @@ assert.equal(resolved.found.light, `light.${stem}_light`);
 assert.equal(resolved.found.speed, `number.${stem}_speed`);
 assert.equal(resolved.found.clean, `button.${stem}_clean_sand`);
 assert.equal(resolved.found.gallery, `select.${stem}_gallery_design`);
+assert.equal(resolved.found.stored, `select.${stem}_pattern`);
 assert.equal(resolved.found.favorites, `select.${stem}_favorites`);
 assert.equal(resolved.found.prompt, `text.${stem}_ai_prompt`);
 assert.equal(resolved.found.slots, `sensor.${stem}_pattern_slots`);

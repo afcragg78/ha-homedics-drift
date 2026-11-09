@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -63,6 +64,8 @@ from .patterns import (
     deletion_refusal,
     documents_from_download,
     find_stock_clean,
+    IMPORT_EMPTY,
+    github_folder_api,
     github_raw_url,
     inbox_names,
     reusable_id,
@@ -774,6 +777,7 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         """Read names and uploaded patterns saved on this machine."""
         stored = await self._library_store.async_load()
         self.library = PatternLibrary.from_dict(stored if isinstance(stored, dict) else None)
+        await self.async_backfill_previews()
 
     async def _save_library(self) -> None:
         await self._library_store.async_save(self.library.to_dict())
@@ -1453,28 +1457,21 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
             await self.async_send(draw_pattern(pattern_id))
             self._replace(pattern_id=pattern_id, status=1)
 
-    async def async_import_pattern_url(self, url: str) -> int:
-        """Download .thr files the user chose and upload the ones that fit.
-
-        Community files are not shipped with this integration. A file that is
-        too long is skipped. The clean pattern is never replaced.
-        """
-        try:
-            checked = github_raw_url(url)
-        except PatternRejected as err:
-            raise HomeAssistantError(err.message) from err
+    async def _download(self, url: str) -> bytes:
         session = async_get_clientsession(self.hass)
         try:
-            async with session.get(checked, timeout=30) as response:
+            async with session.get(url, timeout=30) as response:
                 if response.status != 200:
                     raise HomeAssistantError("That pattern link could not be downloaded")
-                body = await response.read()
+                return await response.read()
         except HomeAssistantError:
             raise
         except Exception as err:
             raise HomeAssistantError("That pattern link could not be downloaded") from err
+
+    async def _import_documents(self, url: str, body: bytes) -> tuple[int, list[str]]:
         try:
-            documents = documents_from_download(checked, body)
+            documents = documents_from_download(url, body)
         except PatternRejected as err:
             raise HomeAssistantError(err.message) from err
         stored = 0
@@ -1489,14 +1486,55 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
                 skipped.append(name)
                 continue
             stored += 1
+        return stored, skipped
+
+    async def async_import_pattern_url(self, url: str) -> dict[str, object]:
+        """Download .thr or .gcode files the user chose and upload the ones that fit.
+
+        A GitHub folder link imports the pattern files in that folder. Community
+        files are not shipped with this integration. The clean pattern is never replaced.
+        """
+        try:
+            folder = github_folder_api(url)
+            checked = github_raw_url(url)
+        except PatternRejected as err:
+            raise HomeAssistantError(err.message) from err
+        stored = 0
+        skipped: list[str] = []
+        if folder:
+            listing_body = await self._download(folder)
+            try:
+                listing = json.loads(listing_body)
+            except json.JSONDecodeError as err:
+                raise HomeAssistantError("That pattern folder could not be read") from err
+            files = listing if isinstance(listing, list) else [listing]
+            downloads = [
+                item.get("download_url")
+                for item in files
+                if isinstance(item, dict)
+                and str(item.get("name", "")).lower().endswith((".thr", ".gcode", ".gco", ".nc", ".zip"))
+                and item.get("download_url")
+            ][:12]
+            if not downloads:
+                raise HomeAssistantError(IMPORT_EMPTY)
+            for file_url in downloads:
+                try:
+                    body = await self._download(str(file_url))
+                    added, missed = await self._import_documents(str(file_url), body)
+                except HomeAssistantError:
+                    skipped.append(Path(str(file_url)).stem)
+                    continue
+                stored += added
+                skipped.extend(missed)
+        else:
+            body = await self._download(checked)
+            stored, skipped = await self._import_documents(checked, body)
         if stored == 0:
-            raise HomeAssistantError(
-                "Nothing from that link could be stored. Files must be .thr patterns short enough for the table."
-            )
+            raise HomeAssistantError(IMPORT_EMPTY)
         if skipped:
             self.ai_detail = "Skipped: " + ", ".join(skipped[:8])
             self._publish()
-        return stored
+        return {"stored": stored, "skipped": skipped}
 
     async def _upload_thr(self, name: str, thr: str, *, play: bool, source: str) -> int:
         self._reject_if_busy()
@@ -1570,6 +1608,47 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         if not polar or len(polar) < 2:
             return None
         return trace_points(polar)
+
+    async def async_backfill_previews(self) -> None:
+        """Draw a sand preview for any saved pattern that still has its .thr text."""
+        for record in self.library.user_patterns():
+            if not record.thr.strip():
+                continue
+            preview = self._preview_path(record.pattern_id)
+            if preview.is_file():
+                continue
+            try:
+                png = await self.hass.async_add_executor_job(render_thr, record.thr)
+
+                def _write(path: Path = preview, payload: bytes = png) -> None:
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(payload)
+
+                await self.hass.async_add_executor_job(_write)
+            except Exception:
+                _LOGGER.warning(
+                    "Drift preview was not saved for pattern %s",
+                    record.pattern_id,
+                    exc_info=True,
+                )
+
+    def custom_pattern_previews(self) -> list[dict[str, object]]:
+        """Names and pictures for patterns stored from this Home Assistant machine."""
+        import base64
+
+        found: list[dict[str, object]] = []
+        for record in self.library.user_patterns():
+            preview = self._preview_path(record.pattern_id)
+            picture = None
+            if preview.is_file():
+                try:
+                    picture = "data:image/png;base64," + base64.b64encode(preview.read_bytes()).decode("ascii")
+                except OSError:
+                    picture = None
+            found.append(
+                {"name": record.name, "pattern_id": record.pattern_id, "preview": picture}
+            )
+        return found
 
     def preview_bytes(self) -> bytes | None:
         """PNG for the pattern that is on now, when this machine has one."""

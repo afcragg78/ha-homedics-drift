@@ -22,6 +22,8 @@ from custom_components.homedics_drift.patterns import (
     densify,
     documents_from_download,
     gcode_to_thr,
+    IMPORT_EMPTY,
+    github_folder_api,
     github_raw_url,
     inbox_names,
     label_patterns,
@@ -181,6 +183,10 @@ def test_github_blob_and_gcode_become_a_thr_path() -> None:
         "https://github.com/fly115/Sandtable-patterns/blob/master/example.thr"
     )
     assert raw == "https://raw.githubusercontent.com/fly115/Sandtable-patterns/master/example.thr"
+    folder = github_folder_api("https://github.com/example/patterns/tree/main/gcode")
+    assert folder == "https://api.github.com/repos/example/patterns/contents/gcode?ref=main"
+    assert "gcode" in IMPORT_EMPTY
+    assert ".thr" in IMPORT_EMPTY
     assert github_raw_url("https://raw.githubusercontent.com/example/a.thr").endswith("a.thr")
     text = gcode_to_thr("G21\nG90\nG1 X0 Y0\nG1 X10 Y0\nG1 X10 Y10\nG1 X0 Y10\n")
     polar = parse_thr(text)
@@ -189,6 +195,13 @@ def test_github_blob_and_gcode_become_a_thr_path() -> None:
     loaded = documents_from_download("square.gcode", text.encode() if False else b"G1 X0 Y0\nG1 X8 Y0\nG1 X8 Y8\n")
     assert loaded[0][0] == "square"
     assert len(parse_thr(loaded[0][1])) >= 2
+
+
+def test_user_patterns_skip_the_protected_clean_spiral() -> None:
+    library = PatternLibrary()
+    library.remember(50001, "Star", "0 0\n1 1\n", source="ai")
+    library.remember(50000, "Clean", "0 0\n1 1\n", protected=True)
+    assert [record.name for record in library.user_patterns()] == ["Star"]
 
 
 def test_preview_is_a_png() -> None:

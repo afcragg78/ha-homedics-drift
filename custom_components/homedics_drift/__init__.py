@@ -38,13 +38,14 @@ PLATFORMS: list[Platform] = [
 
 async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
     """Register pattern services and the dashboard card once."""
-    from .http import DriftPathView
+    from .http import DriftLibraryView, DriftPathView
     from .services import async_setup_services
 
     await async_setup_services(hass)
     if not hass.data.get(f"{DOMAIN}_card"):
         await _async_register_card(hass)
         hass.http.register_view(DriftPathView())
+        hass.http.register_view(DriftLibraryView())
         hass.data[f"{DOMAIN}_card"] = True
     return True
 
@@ -56,7 +57,7 @@ async def _async_register_card(hass: HomeAssistant) -> None:
     www = Path(__file__).parent / "www"
     root = f"/{DOMAIN}"
     # Query string so a browser that cached the previous card fetches this one.
-    url = f"{root}/drift-table-card.js?v=2"
+    url = f"{root}/drift-table-card.js?v=3"
     try:
         from homeassistant.components.http import StaticPathConfig
 

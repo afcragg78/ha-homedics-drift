@@ -55,10 +55,15 @@ const PREVIEW_KEYS = new Set(["preview", "gallery_preview"]);
 
 function roleFor(entityId, entry) {
   const key = entry && entry.translation_key;
+  const id = String(entityId || "");
+  if (key === "pattern" && id.startsWith("select.")) return "stored";
   if (key && ROLE_BY_KEY[key]) return ROLE_BY_KEY[key];
-  const id = String(entityId || "").toLowerCase();
+  const lower = id.toLowerCase();
+  if (lower.startsWith("select.") && lower.endsWith("_pattern") && !lower.endsWith("_pattern_id")) {
+    return "stored";
+  }
   for (const [suffix, role] of ROLE_BY_SUFFIX) {
-    if (id.endsWith(suffix)) return role;
+    if (lower.endsWith(suffix)) return role;
   }
   return null;
 }

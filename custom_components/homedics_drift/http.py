@@ -27,6 +27,23 @@ def coordinator_for_device(hass: HomeAssistant, device_id: str):
     return None
 
 
+class DriftLibraryView(HomeAssistantView):
+    """User patterns and their sand previews. The table is not queried."""
+
+    url = "/api/homedics_drift/library/{device_id}"
+    name = "api:homedics_drift:library"
+    requires_auth = True
+
+    async def get(self, request: web.Request, device_id: str) -> web.Response:
+        hass: HomeAssistant = request.app["hass"]
+        coordinator = coordinator_for_device(hass, device_id)
+        if coordinator is None:
+            return self.json({"patterns": []})
+        await coordinator.async_backfill_previews()
+        patterns = await hass.async_add_executor_job(coordinator.custom_pattern_previews)
+        return self.json({"patterns": patterns})
+
+
 class DriftPathView(HomeAssistantView):
     """Polar points for the pattern on the table, when this machine has them."""
 
