@@ -15,6 +15,7 @@ SERVICE_UPLOAD = "upload_pattern"
 SERVICE_DELETE = "delete_pattern"
 SERVICE_RENAME = "rename_pattern"
 SERVICE_AI_DRAW = "ai_draw"
+SERVICE_PICTURE = "picture_to_sand"
 SERVICE_GENERATE = "generate_pattern"
 SERVICE_GALLERY = "add_gallery_design"
 SERVICE_IMPORT = "import_pattern_url"
@@ -47,6 +48,16 @@ _AI_SCHEMA = vol.Schema(
         vol.Required("prompt"): cv.string,
         vol.Optional("name"): cv.string,
         vol.Optional("play", default=False): cv.boolean,
+        vol.Optional("style", default="contours"): cv.string,
+    },
+    extra=vol.ALLOW_EXTRA,
+)
+_PICTURE_SCHEMA = vol.Schema(
+    {
+        vol.Required("image"): cv.string,
+        vol.Optional("name"): cv.string,
+        vol.Optional("play", default=False): cv.boolean,
+        vol.Optional("style", default="contours"): cv.string,
     },
     extra=vol.ALLOW_EXTRA,
 )
@@ -117,6 +128,16 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             call.data["prompt"],
             name=call.data.get("name"),
             play=bool(call.data.get("play")),
+            style=call.data.get("style", "contours"),
+        )
+
+    async def _picture(call: ServiceCall) -> None:
+        coordinator = await _coordinator(hass, call)
+        await coordinator.async_picture_to_sand(
+            call.data["image"],
+            name=call.data.get("name"),
+            play=bool(call.data.get("play")),
+            style=call.data.get("style", "contours"),
         )
 
     async def _generate(call: ServiceCall) -> None:
@@ -137,6 +158,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     hass.services.async_register(DOMAIN, SERVICE_DELETE, _delete, schema=_DELETE_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_RENAME, _rename, schema=_RENAME_SCHEMA)
     hass.services.async_register(DOMAIN, SERVICE_AI_DRAW, _ai_draw, schema=_AI_SCHEMA)
+    hass.services.async_register(DOMAIN, SERVICE_PICTURE, _picture, schema=_PICTURE_SCHEMA)
     async def _gallery(call: ServiceCall) -> None:
         coordinator = await _coordinator(hass, call)
         await coordinator.async_add_gallery_design(

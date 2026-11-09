@@ -11,7 +11,9 @@ import math
 import random
 from dataclasses import dataclass
 
+from .mazes import maze_polar
 from .patterns import MAX_POINTS, PatternRejected, densify
+from .picture import study_polar
 from .sisyphus_tracks import CATALOG, track_polar
 
 CATEGORY_ORDER: tuple[str, ...] = (
@@ -21,6 +23,8 @@ CATEGORY_ORDER: tuple[str, ...] = (
     "Spirals",
     "Waves",
     "Cosmic",
+    "Mazes & Fills",
+    "Contours",
     "Sisyphus Classics",
 )
 _TARGET = 9_000
@@ -299,6 +303,10 @@ def _stack(*parts: list[tuple[float, float]], rim: bool = False) -> list[tuple[f
 def _build(kind: str, rng: random.Random | None = None) -> list[tuple[float, float]]:
     if kind.startswith("sisyphus:"):
         return track_polar(kind.split(":", 1)[1])
+    if kind.startswith("maze:"):
+        return maze_polar(kind.split(":", 1)[1])
+    if kind.startswith("study:"):
+        return study_polar(kind.split(":", 1)[1])
     phase = 0.0 if rng is None else rng.uniform(0.0, 0.45)
     pinch = 1.15 if rng is None else rng.uniform(0.9, 1.35)
     made = _COMPOSE[kind](phase, pinch)
@@ -659,6 +667,19 @@ GALLERY: tuple[GalleryDesign, ...] = (
     GalleryDesign("Aurora Crown", "aurora", "Cosmic"),
     GalleryDesign("Comet Garden", "comet", "Cosmic"),
     GalleryDesign("Eclipse Rose", "eclipse", "Cosmic"),
+    GalleryDesign("Jigsaw Spiral", "maze:jigsaw", "Mazes & Fills"),
+    GalleryDesign("Cretan Labyrinth", "maze:labyrinth", "Mazes & Fills"),
+    GalleryDesign("Ring Maze", "maze:ring-maze", "Mazes & Fills"),
+    GalleryDesign("Random Maze", "maze:random", "Mazes & Fills"),
+    GalleryDesign("Tight Maze", "maze:tight-maze", "Mazes & Fills"),
+    GalleryDesign("Drift Maze", "maze:drift-maze", "Mazes & Fills"),
+    GalleryDesign("Hilbert Fill", "maze:hilbert", "Mazes & Fills"),
+    GalleryDesign("Fine Hilbert", "maze:fine-hilbert", "Mazes & Fills"),
+    GalleryDesign("Peano Fill", "maze:peano", "Mazes & Fills"),
+    GalleryDesign("Tiger Study", "study:tiger", "Contours"),
+    GalleryDesign("Koi Study", "study:koi", "Contours"),
+    GalleryDesign("Lotus Study", "study:lotus", "Contours"),
+    GalleryDesign("Owl Study", "study:owl", "Contours"),
     *(
         GalleryDesign(name, f"sisyphus:{key}", "Sisyphus Classics")
         for name, key in CATALOG
