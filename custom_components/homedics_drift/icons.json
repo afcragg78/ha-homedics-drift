@@ -52,6 +52,11 @@
         "default": "mdi:robot"
       }
     },
+    "binary_sensor": {
+      "connected": {
+        "default": "mdi:bluetooth"
+      }
+    },
     "button": {
       "refresh_patterns": {
         "default": "mdi:folder-refresh"
@@ -70,6 +75,9 @@
       },
       "random_gallery": {
         "default": "mdi:shuffle-variant"
+      },
+      "reconnect": {
+        "default": "mdi:bluetooth-connect"
       }
     },
     "text": {
