@@ -18,6 +18,9 @@ const ROLE_BY_KEY = {
   slots: "slots",
   now_playing: "now",
   favorites: "favorites",
+  playlist: "playlist",
+  inbox: "inbox",
+  upload_folder_pattern: "upload",
   stop_after: "stopAfter",
   clean_before: "cleanBefore",
   send_gallery: "send",
@@ -26,6 +29,9 @@ const ROLE_BY_KEY = {
 };
 
 const ROLE_BY_SUFFIX = [
+  ["_upload_folder_pattern", "upload"],
+  ["_folder_pattern", "inbox"],
+  ["_playlist", "playlist"],
   ["_stop_after_this_design", "stopAfter"],
   ["_clean_before_pattern", "cleanBefore"],
   ["_now_playing_preview", "preview"],
@@ -59,7 +65,12 @@ function roleFor(entityId, entry) {
   if (key === "pattern" && id.startsWith("select.")) return "stored";
   if (key && ROLE_BY_KEY[key]) return ROLE_BY_KEY[key];
   const lower = id.toLowerCase();
-  if (lower.startsWith("select.") && lower.endsWith("_pattern") && !lower.endsWith("_pattern_id")) {
+  if (
+    lower.startsWith("select.") &&
+    lower.endsWith("_pattern") &&
+    !lower.endsWith("_pattern_id") &&
+    !lower.endsWith("_folder_pattern")
+  ) {
     return "stored";
   }
   for (const [suffix, role] of ROLE_BY_SUFFIX) {

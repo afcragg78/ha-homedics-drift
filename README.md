@@ -260,6 +260,21 @@ show_clean: true
 show_storage: false
 ```
 
+The card stays short. You always see the sand, the pattern name, the progress ring, Power, previous, play or pause, next, Stop After, the light switch, brightness, and speed. Those controls use Home Assistant's own buttons, switch, and slider when the dashboard has them. Table patterns and playlists, the gallery, create, light color, Clean Sand, and storage are under **More**, and they start closed. The card remembers what you opened in this browser.
+
+```yaml
+type: custom:drift-table-card
+entity: media_player.YOUR_TABLE
+expanded:
+  - table
+```
+
+`expanded` lists sections that start open: `more`, `table`, `gallery`, `create`, `color`, `clean`, `storage`. `collapsed` forces one shut. A saved choice in the browser wins over both.
+
+![Drift card on a phone](docs/drift-card-phone.png)
+
+**Table** plays a pattern, playlist, or favorite that is already stored on the table. Play does nothing while Power is off. **Light Color** is a few swatches plus **More Colors**, which opens Home Assistant's light dialog. Color Fade and Color Jump from the HoMedics app are not on this card: the published protocol names the light-mode bytes `shifting`, `shiftTime`, and `breathing`, and those names have not been matched to the two app modes.
+
 Now Playing shows the sand in a circle, the lamp colour as a glow, and a progress ring from the progress the table already reports. When this Home Assistant machine has the pattern's path (a gallery design, an upload, or an AI drawing), the card draws the finished grooves up to that progress, leaves the rest faint, and moves a ball along the line. The ball eases between progress updates in the browser. The card does not poll the table. A stock pattern that was never uploaded here has no path, so you only get the ring.
 
 **My Patterns** lists drawings stored from this Home Assistant machine: imports, folder uploads, and AI drawings. Tap one, then **Draw**. That plays it only while Power is on. **Import** takes a `.thr` or `.gcode` link, including a raw GitHub file or a GitHub folder of those files.

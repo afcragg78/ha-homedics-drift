@@ -28,8 +28,26 @@ def test_card_uses_theme_variables_and_optional_styles() -> None:
     assert "requestAnimationFrame" in text
     assert "could not find the Drift player" in text
     assert "resolveDriftEntities" in text
+    for piece in (
+        "ha-icon-button",
+        "ha-control-slider",
+        "ha-slider",
+        "ha-switch",
+        "ha-select",
+        "ha-textfield",
+        "ha-button",
+        "ha-expansion-panel",
+        "hass-more-info",
+        "localStorage",
+        "Stop After",
+        "More Colors",
+    ):
+        assert piece in text
+    assert 'type="color"' not in text
+    assert "entity_id" in text and "device_id" in text
 
 
 def test_card_resolves_entities_without_unique_id() -> None:
     """Frontend registry entries omit unique_id. The matcher must still bind."""
     subprocess.run(["node", "tests/test_card_resolve.mjs"], cwd=ROOT, check=True)
+    subprocess.run(["node", "tests/test_card_sections.mjs"], cwd=ROOT, check=True)
