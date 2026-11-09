@@ -33,6 +33,13 @@ def test_gallery_has_many_distinct_named_designs() -> None:
     assert "Lotus Mandala" not in names
     assert "Temple Rose" not in names
     assert "Nebula Spiral" not in names
+    assert "Hex Tiling" not in names
+    assert "Diamond Ring" not in names
+    assert "Nautilus" not in names
+    assert "Silk Ripple" not in names
+    assert "Ring Tide" not in names
+    assert "Sierpinski" not in names
+    assert "Triangle Weave" not in names
     assert "Drift Away" in names
     assert "Gears" in names
     assert "Yin Yang" in names
