@@ -21,7 +21,7 @@ Home Assistant custom integration for the Bluetooth HoMedics Drift sand tables. 
 
 The card shows the sand, the pattern name, progress, Power, previous, play or pause, next, Stop After, the light, and speed. Everything else is under **More**: patterns and playlists already on the table, the gallery, drawing, import, light color, Clean Sand, and storage.
 
-**Mazes & Fills** in the gallery are dense single-line mazes: a jigsaw spiral, round labyrinths, and Hilbert-style fills.
+**Mazes & Fills** in the gallery are single-line mazes: a classical labyrinth, a ring maze, round grid mazes, and Hilbert-style fills.
 
 If a button cannot run, the card says so in a sentence. It does not show a stack trace, and it never calls a service without an entity or a device.
 

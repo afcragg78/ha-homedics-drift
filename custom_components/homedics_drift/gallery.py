@@ -663,7 +663,6 @@ GALLERY: tuple[GalleryDesign, ...] = (
     GalleryDesign("Aurora Crown", "aurora", "Cosmic"),
     GalleryDesign("Comet Garden", "comet", "Cosmic"),
     GalleryDesign("Eclipse Rose", "eclipse", "Cosmic"),
-    GalleryDesign("Jigsaw Spiral", "maze:jigsaw", "Mazes & Fills"),
     GalleryDesign("Cretan Labyrinth", "maze:labyrinth", "Mazes & Fills"),
     GalleryDesign("Ring Maze", "maze:ring-maze", "Mazes & Fills"),
     GalleryDesign("Random Maze", "maze:random", "Mazes & Fills"),

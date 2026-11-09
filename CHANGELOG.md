@@ -2,7 +2,7 @@
 
 ## 1.3.0
 
-- Gallery category **Mazes & Fills**: Jigsaw Spiral, Cretan Labyrinth, Ring Maze, Random Maze, Tight Maze, Drift Maze, Hilbert Fill, Fine Hilbert, and Peano Fill. Each is one continuous line that fills the disc.
+- Gallery category **Mazes & Fills**: Cretan Labyrinth, Ring Maze, Random Maze, Tight Maze, Drift Maze, Hilbert Fill, Fine Hilbert, and Peano Fill. Each is one continuous line. Jigsaw Spiral is not included.
 
 ## 1.2.1
 
