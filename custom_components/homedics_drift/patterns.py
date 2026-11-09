@@ -145,6 +145,26 @@ def fit_thr_text(text: str) -> str:
     return "\n".join(lines) + "\n"
 
 
+IMPORT_EMPTY = (
+    "Nothing from that link could be stored. "
+    "Files must be .thr or .gcode patterns short enough for the table."
+)
+
+
+def github_folder_api(url: str) -> str | None:
+    """GitHub tree page to the contents API, or None when the link is one file."""
+    cleaned = https_pattern_url(url)
+    parsed = urlparse(cleaned)
+    if (parsed.hostname or "").lower() != "github.com":
+        return None
+    parts = [part for part in parsed.path.split("/") if part]
+    if len(parts) < 4 or parts[2] != "tree":
+        return None
+    user, repo, _tree, ref, *rest = parts
+    folder = "/".join(rest)
+    return f"https://api.github.com/repos/{user}/{repo}/contents/{folder}?ref={ref}"
+
+
 def github_raw_url(url: str) -> str:
     """Turn a GitHub blob link into the raw file. Other https links stay as they are."""
     cleaned = https_pattern_url(url)
@@ -466,6 +486,13 @@ class PatternLibrary:
             if record.protected:
                 return record.pattern_id
         return None
+
+    def user_patterns(self) -> list[PatternRecord]:
+        """Uploads, imports, and AI drawings. The protected clean spiral is not included."""
+        return sorted(
+            (record for record in self.records.values() if not record.protected),
+            key=lambda record: record.name.lower(),
+        )
 
     def remember(
         self,

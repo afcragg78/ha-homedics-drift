@@ -262,6 +262,10 @@ show_storage: false
 
 Now Playing shows the sand in a circle, the lamp colour as a glow, and a progress ring from the progress the table already reports. When this Home Assistant machine has the pattern's path (a gallery design, an upload, or an AI drawing), the card draws the finished grooves up to that progress, leaves the rest faint, and moves a ball along the line. The ball eases between progress updates in the browser. The card does not poll the table. A stock pattern that was never uploaded here has no path, so you only get the ring.
 
+**My Patterns** lists drawings stored from this Home Assistant machine: imports, folder uploads, and AI drawings. Tap one, then **Draw**. That plays it only while Power is on. **Import** takes a `.thr` or `.gcode` link, including a raw GitHub file or a GitHub folder of those files.
+
+![My Patterns tab](docs/my-patterns-tab.png)
+
 Draw on a gallery picture uploads that design and plays it only while Power is on. If **Clean before pattern** is on, the wipe runs first. **Draw With AI** uses the same rule as the Draw with AI button, including **Clean before AI drawings**. Play, pause, next, and previous stay disabled while Power is off. Clean Sand does too. **Stop After** on the card is the same switch: the finished design stays put, with power and the light unchanged.
 
 ![Drift table card](docs/drift-table-card.png)

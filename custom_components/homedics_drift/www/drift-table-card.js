@@ -120,7 +120,9 @@ class DriftTableCard extends HTMLElement {
         .grid img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; }
         .pick { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
         .pick .label { flex: 1; }
-        textarea { width: 100%; min-height: 72px; box-sizing: border-box; resize: vertical; font: inherit; color: var(--primary-text-color); background: var(--secondary-background-color, transparent); border: 1px solid var(--divider-color); border-radius: var(--ha-card-border-radius, 8px); padding: 8px; }
+        textarea, .import-url { width: 100%; box-sizing: border-box; font: inherit; color: var(--primary-text-color); background: var(--secondary-background-color, transparent); border: 1px solid var(--divider-color); border-radius: var(--ha-card-border-radius, 8px); padding: 8px; }
+        textarea { min-height: 72px; resize: vertical; }
+        .import-status { margin-top: 6px; color: var(--secondary-text-color); min-height: 1.2em; }
         .bar { height: 6px; border-radius: 3px; background: var(--divider-color); overflow: hidden; margin-top: 8px; }
         .bar span { display: block; height: 100%; width: 0; background: var(--primary-color); }
         .status { margin-top: 6px; color: var(--secondary-text-color); min-height: 1.2em; }
@@ -147,6 +149,10 @@ class DriftTableCard extends HTMLElement {
         <section class="create"><h2>Create</h2><textarea aria-label="AI Prompt" placeholder="A twelve pointed star"></textarea>
           <div class="row"><button type="button" class="accent ai">Draw With AI</button></div>
           <div class="bar"><span class="ai-bar"></span></div><div class="status"></div>
+          <h2>Import</h2>
+          <input class="import-url" type="url" aria-label="Pattern Link" placeholder="https://… .thr or .gcode">
+          <div class="row"><button type="button" class="accent import">Import</button></div>
+          <div class="import-status"></div>
         </section>
         <div class="foot">
           <button type="button" class="clean">Clean Sand</button>
@@ -204,7 +210,12 @@ class DriftTableCard extends HTMLElement {
     card.querySelector(".draw").addEventListener("click", () => {
       const name = this._picked;
       if (!name || !this._deviceId) return;
-      call("select", "select_option", { entity_id: this._found.gallery, option: name });
+      if (this._state(this._found.power) !== "on") return;
+      if (this._category === "My Patterns") {
+        call("select", "select_option", { entity_id: this._found.stored, option: name });
+        return;
+      }
+      if (this._found.gallery) call("select", "select_option", { entity_id: this._found.gallery, option: name });
       call("homedics_drift", "add_gallery_design", { device_id: this._deviceId, name, play: true });
     });
     card.querySelector(".heart").addEventListener("click", () => {
@@ -212,6 +223,30 @@ class DriftTableCard extends HTMLElement {
       if (!name || !this._deviceId) return;
       const on = (this._favorites || []).includes(name);
       call("homedics_drift", "set_favorite", { device_id: this._deviceId, name, favorite: !on });
+    });
+    card.querySelector(".import").addEventListener("click", () => {
+      const url = card.querySelector(".import-url").value.trim();
+      const note = card.querySelector(".import-status");
+      if (!url || !this._deviceId || !this._hass) {
+        note.textContent = "Paste a .thr or .gcode link first.";
+        return;
+      }
+      note.textContent = "Importing…";
+      this._hass
+        .callService("homedics_drift", "import_pattern_url", { device_id: this._deviceId, url }, undefined, true)
+        .then((result) => {
+          const body = (result && (result.response || result)) || {};
+          const stored = Number(body.stored || 0);
+          const skipped = body.skipped || [];
+          note.textContent = skipped.length
+            ? `Stored ${stored}. Skipped: ${skipped.join(", ")}`
+            : `Stored ${stored}.`;
+          this._mineDevice = this._deviceId;
+          this._loadMine();
+        })
+        .catch((err) => {
+          note.textContent = (err && err.message) || "That link could not be imported.";
+        });
     });
     card.querySelector(".ai").addEventListener("click", () => {
       const text = card.querySelector("textarea").value.trim();
@@ -227,13 +262,21 @@ class DriftTableCard extends HTMLElement {
       const button = event.target.closest("button");
       if (!button) return;
       this._category = button.dataset.cat;
-      this._renderGrid();
+      if (this._category === "My Patterns") {
+        const names = (this._mine || []).map((item) => item.name);
+        if (!names.includes(this._picked)) this._picked = names[0] || "";
+      }
+      this._card.querySelector(".tabs").dataset.key = "";
+      this._card.querySelector(".grid").dataset.key = "";
+      this._updateGallery();
     });
     card.querySelector(".grid").addEventListener("click", (event) => {
       const button = event.target.closest("button");
       if (!button || !button.dataset.name) return;
       this._picked = button.dataset.name;
-      if (this._found.gallery) call("select", "select_option", { entity_id: this._found.gallery, option: this._picked });
+      if (this._category !== "My Patterns" && this._found.gallery) {
+        call("select", "select_option", { entity_id: this._found.gallery, option: this._picked });
+      }
       this._renderGrid();
       this._card.querySelector(".pick .label").textContent = this._picked;
     });
@@ -453,12 +496,18 @@ class DriftTableCard extends HTMLElement {
     const order = this._attr(gallery, "category_order") || [];
     const categories = this._attr(gallery, "categories") || {};
     this._categories = categories;
-    if (!this._category) this._category = order[0] || "All";
-    if (!this._picked) this._picked = this._state(gallery) || (this._attr(gallery, "options") || [])[0] || "";
+    if (!this._category) this._category = order[0] || "My Patterns";
+    if (this._category !== "My Patterns" && !this._picked) {
+      this._picked = this._state(gallery) || (this._attr(gallery, "options") || [])[0] || "";
+    }
     const favState = this._found.favorites && this._hass.states[this._found.favorites];
     this._favorites = (favState && favState.attributes && favState.attributes.options) || [];
     const tabs = this._card.querySelector(".tabs");
-    const names = order.length ? order : ["All"];
+    const names = ["My Patterns", ...(order.length ? order : ["All"])];
+    if (this._deviceId && this._mineDevice !== this._deviceId) {
+      this._mineDevice = this._deviceId;
+      this._loadMine();
+    }
     if (tabs.dataset.key !== names.join("|") + this._category) {
       tabs.replaceChildren();
       names.forEach((cat) => {
@@ -474,13 +523,62 @@ class DriftTableCard extends HTMLElement {
     this._renderGrid();
     this._card.querySelector(".pick .label").textContent = this._picked || "";
     const heart = this._card.querySelector(".heart");
-    const loved = this._picked && this._favorites.includes(this._picked);
+    const mine = this._category === "My Patterns";
+    heart.hidden = mine;
+    const loved = !mine && this._picked && this._favorites.includes(this._picked);
     heart.textContent = loved ? "Favorited" : "Favorite";
-    heart.classList.toggle("on", loved);
+    heart.classList.toggle("on", Boolean(loved));
+    this._card.querySelector(".draw").disabled = mine && this._state(this._found.power) !== "on";
+  }
+
+  async _loadMine() {
+    if (!this._hass || !this._deviceId || !this._hass.callApi) return;
+    const deviceId = this._deviceId;
+    try {
+      const data = await this._hass.callApi(
+        "GET",
+        `homedics_drift/library/${encodeURIComponent(deviceId)}`,
+      );
+      if (this._mineDevice !== deviceId) return;
+      this._mine = (data && data.patterns) || [];
+    } catch (_err) {
+      this._mine = [];
+    }
+    if (this._category === "My Patterns") {
+      const names = (this._mine || []).map((item) => item.name);
+      if (!names.includes(this._picked)) this._picked = names[0] || "";
+      if (this._card) this._card.querySelector(".grid").dataset.key = "";
+      this._updateGallery();
+    }
   }
 
   _renderGrid() {
     const grid = this._card.querySelector(".grid");
+    if (this._category === "My Patterns") {
+      const items = this._mine || [];
+      const key = items.map((item) => item.pattern_id).join("|") + "|" + this._picked;
+      if (grid.dataset.key === key) return;
+      grid.dataset.key = key;
+      grid.replaceChildren();
+      items.forEach((item) => {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.dataset.name = item.name;
+        button.classList.toggle("picked", item.name === this._picked);
+        const img = document.createElement("img");
+        img.alt = item.name;
+        if (item.preview) img.src = item.preview;
+        button.appendChild(img);
+        grid.appendChild(button);
+      });
+      if (!items.length) {
+        const empty = document.createElement("p");
+        empty.className = "import-status";
+        empty.textContent = "No saved patterns yet.";
+        grid.appendChild(empty);
+      }
+      return;
+    }
     const names = Object.keys(this._categories || {}).filter((name) => !this._category || this._category === "All" || this._categories[name] === this._category);
     const byName = {};
     (this._tiles || []).forEach((id) => {
