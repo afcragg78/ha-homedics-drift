@@ -12,6 +12,7 @@ from custom_components.homedics_drift.gallery import (
     gallery_polar,
     gallery_thr,
     random_gallery,
+    retired_gallery_slugs,
     trace_points,
 )
 from custom_components.homedics_drift.patterns import MAX_POINTS, thr_to_wire
@@ -28,11 +29,13 @@ def _longest_step(polar: list[tuple[float, float]]) -> float:
 
 def test_gallery_has_many_distinct_named_designs() -> None:
     names = gallery_names()
-    assert len(names) == 40
     assert len(names) == len(set(names))
-    assert "Lotus Mandala" in names
+    assert "Lotus Mandala" not in names
+    assert "Temple Rose" not in names
+    assert "Nebula Spiral" not in names
     assert "Drift Away" in names
-    assert "Nebula Spiral" in names
+    assert "Gears" in names
+    assert "Yin Yang" in names
     assert len(GALLERY) == len(names)
     categories = gallery_categories()
     assert set(categories.values()) == set(CATEGORY_ORDER)
@@ -68,8 +71,13 @@ def test_random_gallery_is_seeded_and_not_the_canonical_name() -> None:
     assert wire[-1][1] == 50000
 
 
+def test_retired_gallery_pictures_are_the_old_sparse_names() -> None:
+    stored = {"lotus-mandala", "drift-away", "iris-wheel", "ember-arms", "gears"}
+    assert retired_gallery_slugs(stored) == {"lotus-mandala", "iris-wheel", "ember-arms"}
+
+
 def test_trace_points_follow_progress_without_the_full_upload() -> None:
-    polar = gallery_polar("Lotus Mandala")
+    polar = gallery_polar("Drift Away")
     traced = trace_points(polar, limit=400)
     assert 2 <= len(traced) <= 400
     assert traced[0][1] == 0

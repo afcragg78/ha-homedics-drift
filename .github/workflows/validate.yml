@@ -43,5 +43,5 @@ jobs:
           python-version: "3.12"
       - name: Run unit tests
         run: |
-          python -m pip install --upgrade pytest pillow
+          python -m pip install --upgrade pytest pillow voluptuous
           python -m pytest
