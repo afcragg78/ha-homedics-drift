@@ -551,23 +551,6 @@ class DriftTableCard extends HTMLElement {
       className: "prompt",
       placeholder: "A twelve pointed star",
     });
-    const styles = document.createElement("div");
-    styles.className = "row art-styles";
-    [["contours", "Contours"], ["line", "Line Drawing"]].forEach(([value, label]) => {
-      const choice = this._action(label);
-      choice.dataset.style = value;
-      choice.classList.add("art-style");
-      if (value === "contours") choice.classList.add("on");
-      styles.appendChild(choice);
-    });
-    this._artStyle = "contours";
-    const upload = this._action("Upload Photo");
-    upload.classList.add("upload-photo");
-    const file = document.createElement("input");
-    file.type = "file";
-    file.accept = "image/*";
-    file.hidden = true;
-    file.className = "photo-file";
     const ai = this._action("Draw With AI");
     ai.classList.add("ai");
     const bar = document.createElement("div");
@@ -585,7 +568,7 @@ class DriftTableCard extends HTMLElement {
     button.classList.add("import");
     const note = document.createElement("div");
     note.className = "import-status";
-    body.append(prompt, styles, upload, file, ai, bar, status, heading, url, button, note);
+    body.append(prompt, ai, bar, status, heading, url, button, note);
     return panel;
   }
 
@@ -742,55 +725,12 @@ class DriftTableCard extends HTMLElement {
           this._say(text === "That did not work. Check that the table is on and in range." ? "That link could not be imported." : text);
         });
     });
-    card.querySelectorAll(".art-style").forEach((choice) => {
-      choice.addEventListener("click", () => {
-        this._artStyle = choice.dataset.style || "contours";
-        card.querySelectorAll(".art-style").forEach((item) => item.classList.toggle("on", item === choice));
-      });
-    });
-    card.querySelector(".upload-photo").addEventListener("click", () => {
-      card.querySelector(".photo-file").click();
-    });
-    card.querySelector(".photo-file").addEventListener("change", () => {
-      const picked = card.querySelector(".photo-file").files && card.querySelector(".photo-file").files[0];
-      if (!picked || !this._deviceId) {
-        this._say("Choose a photo of a simple shape.");
-        return;
-      }
-      const reader = new FileReader();
-      reader.onload = () => {
-        const image = new Image();
-        image.onload = () => {
-          const canvas = document.createElement("canvas");
-          const scale = 160 / Math.max(image.width, image.height, 1);
-          canvas.width = Math.max(1, Math.round(image.width * scale));
-          canvas.height = Math.max(1, Math.round(image.height * scale));
-          canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
-          const payload = canvas.toDataURL("image/jpeg", 0.72).split(",")[1];
-          const powerOn = this._state(this._found.power) === "on";
-          this._call("homedics_drift", "picture_to_sand", {
-            device_id: this._deviceId,
-            image: payload,
-            style: this._artStyle || "contours",
-            name: "Picture",
-            play: powerOn,
-          });
-        };
-        image.src = String(reader.result || "");
-      };
-      reader.readAsDataURL(picked);
-    });
     card.querySelector(".ai").addEventListener("click", () => {
       const text = (card.querySelector(".prompt").value || "").trim();
       if (!text || !this._deviceId) return;
       if (this._found.prompt) this._call("text", "set_value", { entity_id: this._found.prompt, value: text });
       const powerOn = this._state(this._found.power) === "on";
-      this._call("homedics_drift", "ai_draw", {
-        device_id: this._deviceId,
-        prompt: text,
-        play: powerOn,
-        style: this._artStyle || "contours",
-      });
+      this._call("homedics_drift", "ai_draw", { device_id: this._deviceId, prompt: text, play: powerOn });
     });
     card.querySelector(".clean-row").addEventListener("click", (event) => {
       if (!event.target.closest(".clean") || !this._found.clean) return;

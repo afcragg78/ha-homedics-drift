@@ -76,39 +76,6 @@ ai_draw:
       default: false
       selector:
         boolean:
-    style:
-      default: contours
-      selector:
-        select:
-          options:
-            - contours
-            - line
-
-picture_to_sand:
-  fields:
-    device_id:
-      selector:
-        device:
-          integration: homedics_drift
-    image:
-      required: true
-      selector:
-        text:
-    name:
-      example: Picture
-      selector:
-        text:
-    style:
-      default: contours
-      selector:
-        select:
-          options:
-            - contours
-            - line
-    play:
-      default: false
-      selector:
-        boolean:
 
 generate_pattern:
   fields:

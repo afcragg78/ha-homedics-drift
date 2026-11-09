@@ -55,7 +55,6 @@ from .drawing import (
     path_from_model,
 )
 from .gallery import gallery_names, gallery_polar, gallery_thr, random_gallery, trace_points
-from .picture import STYLE_CONTOURS, art_from_image, art_from_points, normalize_art_style, xy_from_thr
 from .patterns import (
     STORAGE_CAP,
     PatternLibrary,
@@ -1432,21 +1431,13 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         for percent in self._upload_ticks.crossed(done, total):
             self._announce("uploading", percent=percent, name=name)
 
-    async def async_ai_draw(
-        self,
-        prompt: str,
-        *,
-        name: str | None = None,
-        play: bool = False,
-        style: str = STYLE_CONTOURS,
-    ) -> int:
+    async def async_ai_draw(self, prompt: str, *, name: str | None = None, play: bool = False) -> int:
         """Ask the configured assistant for one path, then upload it."""
         self._reject_if_busy()
         cleaned = " ".join(prompt.split())
         if not cleaned:
             raise HomeAssistantError("Type a prompt first")
         title = (name or cleaned[:40]).strip()
-        chosen = normalize_art_style(style)
         self._draw_active = True
         self._upload_ticks = UploadTicks()
         self._set_ai("running", name=title)
@@ -1460,15 +1451,9 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
             )
             assistant = self._assistant_label(kind, target)
             self._announce("drawing", prompt=cleaned, assistant=assistant, name=title)
-            picture = await self._ask_image(target, cleaned) if chosen == STYLE_CONTOURS else None
+            raw = await self._ask_model(kind, target, cleaned)
             try:
-                if picture:
-                    thr = art_from_image(picture, chosen)
-                else:
-                    raw = await self._ask_model(kind, target, cleaned)
-                    thr = path_from_model(raw)
-                    if chosen == STYLE_CONTOURS:
-                        thr = art_from_points(xy_from_thr(thr), chosen)
+                thr = path_from_model(raw)
             except PatternRejected as err:
                 raise HomeAssistantError(err.message) from err
             pattern_id = await self.async_upload_pattern(
@@ -1513,103 +1498,6 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
             raise
         finally:
             self._draw_active = False
-
-    async def _ask_image(self, target: str, prompt: str) -> bytes | None:
-        """A picture from AI Task when that service exists. Otherwise the point list is used."""
-        if not self.hass.services.has_service("ai_task", "generate_image"):
-            return None
-        try:
-            result = await self.hass.services.async_call(
-                "ai_task",
-                "generate_image",
-                {
-                    "task_name": "Drift sand picture",
-                    "instructions": (
-                        "Black line art on white, one subject centered in a circle, no words. " + prompt
-                    ),
-                    "entity_id": target,
-                },
-                blocking=True,
-                return_response=True,
-            )
-        except Exception:
-            _LOGGER.debug("Drift picture generation was not used", exc_info=True)
-            return None
-        if not isinstance(result, dict):
-            return None
-        import base64
-
-        for key in ("image", "data", "content"):
-            value = result.get(key)
-            if isinstance(value, str) and len(value) > 80:
-                try:
-                    return base64.b64decode(value)
-                except Exception:
-                    return None
-        return None
-
-    async def async_picture_to_sand(
-        self,
-        image: str,
-        *,
-        name: str | None = None,
-        play: bool = False,
-        style: str = STYLE_CONTOURS,
-    ) -> int:
-        """Turn an uploaded photo into one sand path. Clean-before follows the AI option."""
-        self._reject_if_busy()
-        import base64
-
-        try:
-            payload = base64.b64decode(image)
-            thr = art_from_image(payload, style)
-        except PatternRejected as err:
-            raise HomeAssistantError(err.message) from err
-        except Exception as err:
-            raise HomeAssistantError("That photo could not be read") from err
-        title = (name or "Picture").strip()
-        self._draw_active = True
-        self._upload_ticks = UploadTicks()
-        self._set_ai("running", name=title)
-        try:
-            self._announce("drawing", prompt=title, name=title)
-            pattern_id = await self.async_upload_pattern(
-                name=title,
-                thr=thr,
-                source="picture",
-                progress=lambda done, total: self._note_upload(done, total, title),
-            )
-            playing = await self._play_with_clean(pattern_id, play, title, title)
-            self._set_ai("stored", name=title, pattern_id=pattern_id)
-            self._announce("done", name=title, playing=playing, prompt=title)
-            return pattern_id
-        except HomeAssistantError as err:
-            self._set_ai("error", error=str(err), name=title)
-            self._announce("error", error=str(err), name=title, prompt=title)
-            raise
-        finally:
-            self._draw_active = False
-
-    async def _play_with_clean(self, pattern_id: int, play: bool, prompt: str, title: str) -> bool:
-        """Wipe first when that option is on and Power is on, then play."""
-        if clean_before_ai_drawing(
-            self.config_entry.options.get(CONF_CLEAN_BEFORE_AI, True),
-            play=play,
-            power_on=self.session_on,
-        ):
-            self._announce("cleaning", prompt=prompt, name=title)
-            clean_id = await self._ensure_clean_id()
-            if self.session_on and clean_id != pattern_id:
-                self._clean_follow += 1
-                token = self._clean_follow
-                async with self._command_lock:
-                    if self.session_on:
-                        await self.async_send(draw_pattern(clean_id))
-                        self._replace(pattern_id=clean_id, status=1)
-                if await self._wait_until_clean_done(token, clean_id):
-                    return await self._play_if_on(pattern_id, True)
-            return await self._play_if_on(pattern_id, True)
-        return await self._play_if_on(pattern_id, play)
 
     async def _play_if_on(self, pattern_id: int, play: bool) -> bool:
         """Start the pattern only while Power is already on."""

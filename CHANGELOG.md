@@ -2,8 +2,7 @@
 
 ## 1.3.0
 
-- Picture to Sand draws Contours or a Line Drawing from an AI prompt or an uploaded photo. Echo contours fill the disc around the subject. Clean before drawing still follows the existing option.
-- Gallery categories Mazes & Fills and Contours: space-filling mazes, a jigsaw spiral, and original tiger, koi, lotus, and owl studies. Square Spiral, Cross Fill, Meander, and the wave study were left out because they did not read cleanly.
+- Gallery category **Mazes & Fills**: Jigsaw Spiral, Cretan Labyrinth, Ring Maze, Random Maze, Tight Maze, Drift Maze, Hilbert Fill, Fine Hilbert, and Peano Fill. Each is one continuous line that fills the disc.
 
 ## 1.2.1
 

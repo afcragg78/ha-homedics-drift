@@ -13,7 +13,6 @@ from dataclasses import dataclass
 
 from .mazes import maze_polar
 from .patterns import MAX_POINTS, PatternRejected, densify
-from .picture import study_polar
 from .sisyphus_tracks import CATALOG, track_polar
 
 CATEGORY_ORDER: tuple[str, ...] = (
@@ -24,7 +23,6 @@ CATEGORY_ORDER: tuple[str, ...] = (
     "Waves",
     "Cosmic",
     "Mazes & Fills",
-    "Contours",
     "Sisyphus Classics",
 )
 _TARGET = 9_000
@@ -305,8 +303,6 @@ def _build(kind: str, rng: random.Random | None = None) -> list[tuple[float, flo
         return track_polar(kind.split(":", 1)[1])
     if kind.startswith("maze:"):
         return maze_polar(kind.split(":", 1)[1])
-    if kind.startswith("study:"):
-        return study_polar(kind.split(":", 1)[1])
     phase = 0.0 if rng is None else rng.uniform(0.0, 0.45)
     pinch = 1.15 if rng is None else rng.uniform(0.9, 1.35)
     made = _COMPOSE[kind](phase, pinch)
@@ -676,10 +672,6 @@ GALLERY: tuple[GalleryDesign, ...] = (
     GalleryDesign("Hilbert Fill", "maze:hilbert", "Mazes & Fills"),
     GalleryDesign("Fine Hilbert", "maze:fine-hilbert", "Mazes & Fills"),
     GalleryDesign("Peano Fill", "maze:peano", "Mazes & Fills"),
-    GalleryDesign("Tiger Study", "study:tiger", "Contours"),
-    GalleryDesign("Koi Study", "study:koi", "Contours"),
-    GalleryDesign("Lotus Study", "study:lotus", "Contours"),
-    GalleryDesign("Owl Study", "study:owl", "Contours"),
     *(
         GalleryDesign(name, f"sisyphus:{key}", "Sisyphus Classics")
         for name, key in CATALOG

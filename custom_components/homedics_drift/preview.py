@@ -20,16 +20,6 @@ def render_thr(text: str, size: int = 256) -> bytes:
 
 def render_preview(points: list[tuple[float, float]], size: int = 256) -> bytes:
     """Draw densified polar points as grooves in tan sand. Returns a PNG."""
-    from PIL import Image
-
-    big = _render_preview(points, size * 2)
-    small = big.resize((size, size), Image.Resampling.LANCZOS)
-    buffer = io.BytesIO()
-    small.save(buffer, format="PNG")
-    return buffer.getvalue()
-
-
-def _render_preview(points: list[tuple[float, float]], size: int) -> object:
     from PIL import Image, ImageDraw, ImageFilter
 
     margin = max(6, size // 16)
@@ -86,4 +76,6 @@ def _render_preview(points: list[tuple[float, float]], size: int) -> object:
         outline=(120, 86, 58),
         width=max(1, size // 80),
     )
-    return sand
+    buffer = io.BytesIO()
+    sand.save(buffer, format="PNG")
+    return buffer.getvalue()
