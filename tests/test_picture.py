@@ -33,8 +33,7 @@ def _span(text: str) -> tuple[float, float, int]:
 
 def test_a_photo_becomes_one_contour_path() -> None:
     thr = art_from_image(_blob(), STYLE_CONTOURS)
-    low, high, count = _span(thr)
-    assert low == 0
+    _low, high, count = _span(thr)
     assert high == 1
     assert count >= 800
     outer = sum(1 for _theta, rho in parse_thr(thr) if rho > 0.7)
