@@ -21,6 +21,8 @@ Home Assistant custom integration for the Bluetooth HoMedics Drift sand tables. 
 
 The card shows the sand, the pattern name, progress, Power, previous, play or pause, next, Stop After, the light, and speed. Everything else is under **More**: patterns and playlists already on the table, the gallery, drawing, import, light color, Clean Sand, and storage.
 
+**Mazes & Fills** in the gallery are dense single-line mazes: a jigsaw spiral, round labyrinths, and Hilbert-style fills.
+
 If a button cannot run, the card says so in a sentence. It does not show a stack trace, and it never calls a service without an entity or a device.
 
 ### The card still looks like an old version
@@ -208,7 +210,7 @@ actions:
 
 ## Gallery
 
-The built-in designs are in Mandalas, Florals, Geometric, Spirals, Waves, Cosmic, and Sisyphus Classics. The first six groups are generated in code. Sisyphus Classics are Bruce Shapiro's MIT-licensed tracks, converted to the table's point limit. The older sparse drawings from the first gallery (Lotus Mandala, Temple Rose, Moonflower, Nebula Spiral, and the rest of that set) are no longer offered, and their leftover picture entities are removed on startup. Each shipped path is one continuous line. The pictures are tan sand with dark grooves.
+The built-in designs are in Mandalas, Florals, Geometric, Spirals, Waves, Cosmic, Mazes & Fills, and Sisyphus Classics. The first six groups are generated in code. Sisyphus Classics are Bruce Shapiro's MIT-licensed tracks, converted to the table's point limit. The older sparse drawings from the first gallery (Lotus Mandala, Temple Rose, Moonflower, Nebula Spiral, and the rest of that set) are no longer offered, and their leftover picture entities are removed on startup. Each shipped path is one continuous line. The pictures are tan sand with dark grooves.
 
 **Random design** uses the same kinds of paths, with a small seeded change, so a random send stays as dense as the named design.
 
