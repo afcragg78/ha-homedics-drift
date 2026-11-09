@@ -29,6 +29,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .const import (
     BACKOFF_MAX,
     BACKOFF_START,
+    CONF_AI_ART_STYLE,
     CONF_AI_TASK_ENTITY,
     CONF_CLEAN_BEFORE_AI,
     CONF_CONVERSATION_AGENT,
@@ -47,8 +48,9 @@ from .drawing import (
     list_conversation_agents,
     generated_thr,
     model_text,
-    path_from_model,
+    parse_model_points,
 )
+from .oasis import art_from_image, art_from_points, normalize_art_style
 from .gallery import gallery_names, gallery_polar, gallery_thr, random_gallery, trace_points
 from .patterns import (
     STORAGE_CAP,
@@ -1223,6 +1225,99 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
             raise HomeAssistantError(f"The conversation agent could not draw that: {err}") from err
         return model_text(result)
 
+    def _art_style(self, override: str | None) -> str:
+        if override:
+            return normalize_art_style(override)
+        return normalize_art_style(self.config_entry.options.get(CONF_AI_ART_STYLE, "contours"))
+
+    def _supports_image(self, entity_id: str) -> bool:
+        """True when this AI Task advertises generate_image. The bit is 4."""
+        if not self.hass.services.has_service("ai_task", "generate_image"):
+            return False
+        state = self.hass.states.get(entity_id)
+        if state is None:
+            return False
+        try:
+            return int(state.attributes.get("supported_features", 0)) & 4 != 0
+        except (TypeError, ValueError):
+            return False
+
+    async def _picture_bytes(self, result: object) -> bytes | None:
+        if not isinstance(result, dict):
+            return None
+        for key in ("image_data", "image", "data"):
+            raw = result.get(key)
+            if isinstance(raw, (bytes, bytearray)) and raw:
+                return bytes(raw)
+        media_id = result.get("media_source_id")
+        if not isinstance(media_id, str) or not media_id:
+            return None
+        try:
+            from homeassistant.components import media_source
+
+            media = await media_source.async_resolve_media(self.hass, media_id, None)
+        except Exception as err:
+            raise HomeAssistantError("The generated picture could not be read") from err
+        path = getattr(media, "path", None)
+        if path:
+            file_path = Path(path)
+            return await self.hass.async_add_executor_job(file_path.read_bytes)
+        url = getattr(media, "url", None)
+        if isinstance(url, str) and url.startswith("http"):
+            session = async_get_clientsession(self.hass)
+            async with session.get(url, timeout=30) as response:
+                if response.status != 200:
+                    return None
+                return await response.read()
+        return None
+
+    async def _generate_picture(self, entity_id: str, prompt: str) -> bytes:
+        instructions = (
+            "High-contrast black and white picture, centered and filling a circle. "
+            "Bold shapes, no text, no border, no frame. Subject: " + prompt
+        )
+        try:
+            result = await self.hass.services.async_call(
+                "ai_task",
+                "generate_image",
+                {
+                    "task_name": "Drift sand engraving",
+                    "instructions": instructions,
+                    "entity_id": entity_id,
+                },
+                blocking=True,
+                return_response=True,
+            )
+        except HomeAssistantError:
+            raise
+        except Exception as err:
+            raise HomeAssistantError(f"AI Task could not draw that picture: {err}") from err
+        picture = await self._picture_bytes(result)
+        if not picture:
+            raise HomeAssistantError("The image model did not return a picture")
+        return picture
+
+    async def _engrave(self, kind: str, target: str, prompt: str, style: str) -> str:
+        """Contours or spiral shading from a picture, otherwise an echoed line."""
+        if kind == "ai_task" and style != "line" and self._supports_image(target):
+            try:
+                picture = await self._generate_picture(target, prompt)
+                return art_from_image(picture, style)
+            except PatternRejected as err:
+                raise HomeAssistantError(err.message) from err
+            except HomeAssistantError:
+                raise
+            except Exception:
+                _LOGGER.warning(
+                    "Drift could not engrave the picture, so it used line echoes",
+                    exc_info=True,
+                )
+        raw = await self._ask_model(kind, target, prompt)
+        try:
+            return art_from_points(parse_model_points(raw), style)
+        except PatternRejected as err:
+            raise HomeAssistantError(err.message) from err
+
     def _assistant_label(self, kind: str, target: str) -> str:
         if kind == "ai_task":
             state = self.hass.states.get(target)
@@ -1304,7 +1399,14 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         for percent in self._upload_ticks.crossed(done, total):
             self._announce("uploading", percent=percent, name=name)
 
-    async def async_ai_draw(self, prompt: str, *, name: str | None = None, play: bool = False) -> int:
+    async def async_ai_draw(
+        self,
+        prompt: str,
+        *,
+        name: str | None = None,
+        play: bool = False,
+        style: str | None = None,
+    ) -> int:
         """Ask the configured assistant for one path, then upload it."""
         self._reject_if_busy()
         cleaned = " ".join(prompt.split())
@@ -1324,11 +1426,7 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
             )
             assistant = self._assistant_label(kind, target)
             self._announce("drawing", prompt=cleaned, assistant=assistant, name=title)
-            raw = await self._ask_model(kind, target, cleaned)
-            try:
-                thr = path_from_model(raw)
-            except PatternRejected as err:
-                raise HomeAssistantError(err.message) from err
+            thr = await self._engrave(kind, target, cleaned, self._art_style(style))
             pattern_id = await self.async_upload_pattern(
                 name=title,
                 thr=thr,

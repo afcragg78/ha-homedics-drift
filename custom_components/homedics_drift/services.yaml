@@ -76,6 +76,13 @@ ai_draw:
       default: false
       selector:
         boolean:
+    style:
+      selector:
+        select:
+          options:
+            - contours
+            - spiral
+            - line
 
 generate_pattern:
   fields:

@@ -16,6 +16,7 @@ from homeassistant.const import CONF_ADDRESS
 from homeassistant.helpers import selector
 
 from .const import (
+    CONF_AI_ART_STYLE,
     CONF_AI_TASK_ENTITY,
     CONF_CLEAN_BEFORE_AI,
     CONF_CONVERSATION_AGENT,
@@ -71,8 +72,10 @@ class DriftOptionsFlow(OptionsFlow):
     ) -> ConfigFlowResult:
         """Choose which assistant draws a prompt, if the user has one."""
         if user_input is not None:
+            style = user_input.get(CONF_AI_ART_STYLE, "contours")
             cleaned: dict[str, Any] = {
-                CONF_CLEAN_BEFORE_AI: bool(user_input.get(CONF_CLEAN_BEFORE_AI, True))
+                CONF_CLEAN_BEFORE_AI: bool(user_input.get(CONF_CLEAN_BEFORE_AI, True)),
+                CONF_AI_ART_STYLE: style if style in {"contours", "spiral", "line"} else "contours",
             }
             for key in (CONF_AI_TASK_ENTITY, CONF_CONVERSATION_AGENT):
                 value = user_input.get(key, self.config_entry.options.get(key))
@@ -92,7 +95,22 @@ class DriftOptionsFlow(OptionsFlow):
             vol.Required(
                 CONF_CLEAN_BEFORE_AI,
                 default=current.get(CONF_CLEAN_BEFORE_AI, True),
-            ): selector.selector({"boolean": {}})
+            ): selector.selector({"boolean": {}}),
+            vol.Required(
+                CONF_AI_ART_STYLE,
+                default=current.get(CONF_AI_ART_STYLE, "contours"),
+            ): selector.selector(
+                {
+                    "select": {
+                        "options": [
+                            {"value": "contours", "label": "Contours"},
+                            {"value": "spiral", "label": "Spiral shading"},
+                            {"value": "line", "label": "Line drawing"},
+                        ],
+                        "mode": "dropdown",
+                    }
+                }
+            ),
         }
         if task_options:
             schema[

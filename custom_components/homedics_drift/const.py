@@ -22,3 +22,4 @@ POWER_DEBOUNCE: Final = 0.2
 CONF_AI_TASK_ENTITY: Final = "ai_task_entity"
 CONF_CONVERSATION_AGENT: Final = "conversation_agent"
 CONF_CLEAN_BEFORE_AI: Final = "clean_before_ai"
+CONF_AI_ART_STYLE: Final = "ai_art_style"

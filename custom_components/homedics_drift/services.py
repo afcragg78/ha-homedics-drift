@@ -117,6 +117,7 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             call.data["prompt"],
             name=call.data.get("name"),
             play=bool(call.data.get("play")),
+            style=call.data.get("style"),
         )
 
     async def _generate(call: ServiceCall) -> None:
