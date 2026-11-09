@@ -41,10 +41,14 @@ def test_gallery_has_many_distinct_named_designs() -> None:
     assert "Sierpinski" not in names
     assert "Triangle Weave" not in names
     assert "Drift Away" in names
+    assert "Jigsaw Spiral" in names
+    assert "Tiger Study" in names
     assert "Gears" in names
     assert "Yin Yang" in names
     assert len(GALLERY) == len(names)
     categories = gallery_categories()
+    assert "Mazes & Fills" in categories.values()
+    assert "Contours" in categories.values()
     assert set(categories.values()) == set(CATEGORY_ORDER)
     assert list(dict.fromkeys(categories[name] for name in names)) == list(CATEGORY_ORDER)
 

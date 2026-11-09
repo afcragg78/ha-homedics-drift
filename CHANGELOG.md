@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.0
+
+- Picture to Sand draws Contours or a Line Drawing from an AI prompt or an uploaded photo. Echo contours fill the disc around the subject. Clean before drawing still follows the existing option.
+- Gallery categories Mazes & Fills and Contours: space-filling mazes, a jigsaw spiral, and original tiger, koi, lotus, wave, and owl studies.
+
 ## 1.2.1
 
 - The table reconnects on its own after the Bluetooth link drops. The wait starts near 2 seconds, doubles, and stops at 60 seconds.
