@@ -49,12 +49,13 @@ from .drawing import (
     model_text,
     path_from_model,
 )
-from .gallery import gallery_names, gallery_thr, random_gallery
+from .gallery import gallery_names, gallery_polar, gallery_thr, random_gallery, trace_points
 from .patterns import (
     STORAGE_CAP,
     PatternLibrary,
     CleanList,
     PatternRejected,
+    parse_thr,
     allocate_id,
     choose_clean_upload_id,
     cleaning_spiral,
@@ -104,6 +105,7 @@ from .protocol import (
     PowerQueue,
     percent_to_speed_raw,
     playback_allowed,
+    StopAfterWatch,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -157,6 +159,7 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         self._inbox_unsub: Any = None
         self._seen_pattern_id: int | None = None
         self._clean_follow = 0
+        self.stop_after = StopAfterWatch()
         self.ai_prompt = ""
         self.ai_status = "idle"
         self.ai_error = ""
@@ -348,7 +351,18 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
             if message.state.pattern_id != self._seen_pattern_id:
                 self._seen_pattern_id = message.state.pattern_id
                 self.preview_at = datetime.now(timezone.utc)
+            pause_finished = self.stop_after.observe(
+                session_on=self.session_on,
+                drawing=message.state.drawing,
+                progress=message.state.progress,
+                pattern_id=message.state.pattern_id,
+            )
             self.async_set_updated_data(message.state)
+            if pause_finished:
+                self.hass.async_create_task(
+                    self._pause_finished_design(),
+                    name=f"{DOMAIN}-stop-after-{self.address}",
+                )
             return
         if message.kind is Kind.LIGHT_MODE and message.light_brightness is not None:
             self._apply_light_mode(message)
@@ -567,8 +581,23 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
                     await self.async_send(play_pause())
                     self._replace(status=1)
 
+    def authorize_stop_after(self, pattern_changes: int = 1) -> None:
+        """The user chose a design or pressed play. That one may run."""
+        self.stop_after.authorize(pattern_changes)
+
+    async def _pause_finished_design(self) -> None:
+        """Pause only. Power stays on and the lamp is left as it is."""
+        async with self._command_lock:
+            if not self.stop_after.enabled or not playback_allowed(self.session_on):
+                return
+            if self.data is None or not self.data.drawing:
+                return
+            await self.async_send(play_pause())
+            self._replace(status=0)
+
     async def async_toggle_playback(self) -> None:
         """Send play/pause. This does not change the power switch."""
+        self.authorize_stop_after()
         async with self._command_lock:
             if not playback_allowed(self.session_on):
                 return
@@ -577,12 +606,14 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
             self._replace(status=0 if drawing else 1)
 
     async def async_next(self) -> None:
+        self.authorize_stop_after()
         async with self._command_lock:
             if not playback_allowed(self.session_on):
                 return
             await self.async_send(next_pattern())
 
     async def async_previous(self) -> None:
+        self.authorize_stop_after()
         async with self._command_lock:
             if not playback_allowed(self.session_on):
                 return
@@ -683,6 +714,7 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
 
     async def async_select_playlist(self, label: str) -> None:
         """Draw the playlist the table reported under ``label``."""
+        self.authorize_stop_after()
         async with self._command_lock:
             await self._select_playlist(label)
 
@@ -707,6 +739,7 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
 
     async def async_select_pattern(self, label: str) -> None:
         """Play one stored pattern. This does not change the power switch."""
+        self.authorize_stop_after(2 if self.library.clean_before else 1)
         async with self._command_lock:
             self._require_awake()
             pattern_id = None
@@ -1006,6 +1039,7 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
 
     async def async_clean_sand(self) -> None:
         """Play the clean pattern. Power stays wherever the switch left it."""
+        self.authorize_stop_after()
         if not self.session_on:
             raise HomeAssistantError("Drift power is off")
         async with self._command_lock:
@@ -1342,6 +1376,7 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         """Start the pattern only while Power is already on."""
         if not play or not self.session_on:
             return False
+        self.authorize_stop_after()
         async with self._command_lock:
             if not self.session_on:
                 return False
@@ -1474,7 +1509,23 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
                 source=source,
                 progress=lambda done, total: self._note_upload(done, total, name),
             )
-            playing = await self._play_if_on(pattern_id, play)
+            playing = False
+            if play and self.session_on and self.library.clean_before:
+                self._announce("cleaning", name=name)
+                clean_id = await self._ensure_clean_id()
+                if self.session_on and clean_id != pattern_id:
+                    self._clean_follow += 1
+                    token = self._clean_follow
+                    async with self._command_lock:
+                        if self.session_on:
+                            await self.async_send(draw_pattern(clean_id))
+                            self._replace(pattern_id=clean_id, status=1)
+                    if await self._wait_until_clean_done(token, clean_id):
+                        playing = await self._play_if_on(pattern_id, True)
+                else:
+                    playing = await self._play_if_on(pattern_id, True)
+            else:
+                playing = await self._play_if_on(pattern_id, play)
             self._announce("done", name=name, playing=playing)
             return pattern_id
         except HomeAssistantError as err:
@@ -1491,6 +1542,34 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
             raise HomeAssistantError(err.message) from err
         await self._save_library()
         self._publish()
+
+    def has_known_path(self, pattern_id: int) -> bool:
+        """True when this machine can draw the pattern, not only a stock id."""
+        record = self.library.records.get(pattern_id)
+        if record is not None and record.thr.strip():
+            return True
+        name = self.library.name_for(pattern_id)
+        return bool(name and name in gallery_names())
+
+    def known_path(self, pattern_id: int) -> list[list[float]] | None:
+        """Polar points for the live trace. None for a stock pattern with no file."""
+        polar: list[tuple[float, float]] | None = None
+        record = self.library.records.get(pattern_id)
+        if record is not None and record.thr.strip():
+            try:
+                polar = parse_thr(record.thr)
+            except PatternRejected:
+                polar = None
+        if not polar:
+            name = self.library.name_for(pattern_id)
+            if name and name in gallery_names():
+                try:
+                    polar = gallery_polar(name)
+                except PatternRejected:
+                    polar = None
+        if not polar or len(polar) < 2:
+            return None
+        return trace_points(polar)
 
     def preview_bytes(self) -> bytes | None:
         """PNG for the pattern that is on now, when this machine has one."""

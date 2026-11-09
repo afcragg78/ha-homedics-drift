@@ -83,6 +83,7 @@ One device per table. Entity names are prefixed with the table's Bluetooth name.
 | --- | --- |
 | `light` Light | Off is brightness 0 (`0x14/7`) and stays off. On restores the last colour the way Drifted does (`0x14/15` with the enable byte, `0x14/13` `Temp`, `0x11/4` at the last non-zero brightness or 100) and then sends that same non-zero brightness with `0x14/7`, which is what relights the LEDs. |
 | `switch` Power | An integration switch, remembered across restarts. The table has no real power-off: `0x14/16` with 0 only pauses, and the `powerOn` flag stays on, so the switch does not follow that flag. Off pauses a moving ball and turns the lamp off, remembering the colour and brightness. On restores that lamp and resumes play. Play, pause, next, and previous never move this switch. |
+| `switch` Stop after this design | Remembered across restarts. When on, a finished design is paused so the sand stays still. Power is not turned off and the lamp is left on. Another design starts only when you pick one, send one, or press play. |
 | `media_player` Player | Available whenever the table is connected. While Power is off it stays off and offers no play, pause, next, previous, or source button. While Power is on it shows playing or paused, with those transport buttons and no power button of its own. |
 | `number` Speed | 0–100%. The table's raw speed byte runs from 30 to 75 (`30 + percent/100 × 45`). 0% is raw 30 and 100% is raw 75, which is what the HoMedics app calls full speed. |
 | `select` Playlist | Every playlist the table itself sends during the session dump (`0x30`, actions 1–4), refreshed on each connection. A human name in the packet is shown. Numeric ids, including the app's millisecond timestamps, stay behind the command and are labeled `Playlist N`. Choosing one sends draw-from-playlist (`0x14/2`) with that id and the first pattern id in the list, or pattern 0 when the table did not include pattern ids. Nothing is hardcoded. Ignored while soft power is off. |
@@ -175,7 +176,9 @@ actions:
 
 ## Gallery
 
-Thirty-eight intricate designs are built into the integration. They are generated in code, not downloaded. Each path is one continuous line from the centre to the rim: layered mandalas, spirograph weaves, fractional roses, Lissajous figures, decaying harmonographs, galaxies, Chladni-style bands, wave rings, fern curls, and long sweeping arcs.
+Forty designs are built into the integration, in six groups: Mandalas, Florals, Geometric, Spirals, Waves, and Cosmic. They are generated in code, not downloaded. Each one is a single continuous line from the centre to the rim. Petals, stars, and rings are joined along the centre or the rim, so the ball does not cut straight across the sand between copies. The pictures are tan sand with dark grooves.
+
+**Random design** uses the same kinds of paths, with a small seeded change, so a random send stays as dense as the named design.
 
 Pick one in **Gallery design**. The row picture and **Gallery preview** show that design. Nothing is sent until you press **Send gallery design** or call:
 
@@ -224,6 +227,40 @@ cards:
 ```
 
 Copy a block for any other name in the gallery. The picture entities are created for you.
+
+## Dashboard card
+
+The integration serves `drift-table-card.js` itself and registers it with Home Assistant, so you do not install a second HACS frontend repo. Add a card:
+
+```yaml
+type: custom:drift-table-card
+entity: media_player.YOUR_TABLE
+```
+
+`device:` works in place of `entity:` if you already have the device id. The card finds the other entities on that device.
+
+It uses the dashboard theme: `ha-card`, `--ha-card-background`, `--primary-text-color`, `--primary-color`, `--ha-card-border-radius`, and the other theme variables. Nothing is frosted unless you ask. `style: frosted` turns on a translucent blur. `style: minimal` drops the card fill and shadow.
+
+Sections are on unless you set them to `false`:
+
+```yaml
+type: custom:drift-table-card
+entity: media_player.YOUR_TABLE
+style: native
+show_now: true
+show_gallery: true
+show_create: true
+show_light: true
+show_speed: true
+show_clean: true
+show_storage: false
+```
+
+Now Playing shows the sand in a circle, the lamp colour as a glow, and a progress ring from the progress the table already reports. When this Home Assistant machine has the pattern's path (a gallery design, an upload, or an AI drawing), the card draws the finished grooves up to that progress, leaves the rest faint, and moves a ball along the line. The ball eases between progress updates in the browser. The card does not poll the table. A stock pattern that was never uploaded here has no path, so you only get the ring.
+
+Draw on a gallery picture uploads that design and plays it only while Power is on. If **Clean before pattern** is on, the wipe runs first. **Draw With AI** uses the same rule as the Draw with AI button, including **Clean before AI drawings**. Play, pause, next, and previous stay disabled while Power is off. Clean Sand does too. **Stop After** on the card is the same switch: the finished design stays put, with power and the light unchanged.
+
+![Drift table card](docs/drift-table-card.png)
 
 ### Patterns from other people
 

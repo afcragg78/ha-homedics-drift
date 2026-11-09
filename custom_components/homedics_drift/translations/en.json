@@ -84,6 +84,9 @@
       "clean_before": {
         "name": "Clean before pattern"
       },
+      "stop_after": {
+        "name": "Stop after this design"
+      },
       "favorite": {
         "name": "Favorite"
       }

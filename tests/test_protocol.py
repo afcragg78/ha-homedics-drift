@@ -44,6 +44,7 @@ from custom_components.homedics_drift.protocol import (
     project_session,
     session_actions,
     shown_playback,
+    StopAfterWatch,
     transport_action,
     normalize_advertised_name,
     resolved_lamp_level,
@@ -544,6 +545,25 @@ def test_pause_does_not_change_power_and_play_does_not_turn_it_on() -> None:
     assert transport_action("power_on", False, drawing=False) == (True, "session_on")
     assert playback_allowed(False) is False
     assert playback_allowed(True) is True
+
+
+def test_stop_after_pauses_at_the_end_without_touching_power() -> None:
+    watch = StopAfterWatch()
+    watch.enabled = True
+    assert watch.observe(session_on=True, drawing=True, progress=0.4, pattern_id=3) is False
+    assert watch.observe(session_on=True, drawing=True, progress=1.0, pattern_id=3) is True
+    assert watch.observe(session_on=True, drawing=True, progress=1.0, pattern_id=3) is False
+    assert watch.observe(session_on=False, drawing=True, progress=1.0, pattern_id=3) is False
+    watch.enabled = True
+    watch.pattern_id = 3
+    watch.pausing = False
+    assert watch.observe(session_on=True, drawing=True, progress=0.2, pattern_id=8) is True
+    watch.authorize()
+    assert watch.observe(session_on=True, drawing=True, progress=0.1, pattern_id=9) is False
+    assert watch.observe(session_on=True, drawing=True, progress=1.0, pattern_id=9) is False
+    assert watch.observe(session_on=True, drawing=True, progress=0.2, pattern_id=9) is False
+    assert watch.observe(session_on=True, drawing=True, progress=1.0, pattern_id=9) is True
+    assert watch.observe(session_on=True, drawing=False, progress=1.0, pattern_id=9) is False
 
 
 def test_player_hides_every_transport_control_while_power_is_off() -> None:

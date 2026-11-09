@@ -563,6 +563,68 @@ def transport_action(action: str, session_on: bool, *, drawing: bool) -> tuple[b
     return session_on, None
 
 
+class StopAfterWatch:
+    """Pause when a design finishes. Power and the lamp are not touched.
+
+    A user play, skip, or pattern choice grants the next pattern change so the
+    table can start that design. After it reaches the end, or advances by
+    itself, the next observe asks for a pause.
+    """
+
+    def __init__(self) -> None:
+        self.enabled = False
+        self.pattern_id: int | None = None
+        self.grants = 0
+        self.allow_finish = False
+        self.pausing = False
+
+    def authorize(self, pattern_changes: int = 1) -> None:
+        """Let the user start a design. ``pattern_changes`` covers a wipe then the design."""
+        self.grants += max(1, pattern_changes)
+        self.allow_finish = True
+        self.pausing = False
+
+    def observe(
+        self,
+        *,
+        session_on: bool,
+        drawing: bool,
+        progress: float,
+        pattern_id: int,
+    ) -> bool:
+        """True when pause should be sent. Never means power off or lamp off."""
+        if not self.enabled or not session_on:
+            self.pattern_id = pattern_id
+            self.pausing = False
+            self.allow_finish = False
+            return False
+        if not drawing:
+            self.pausing = False
+            if pattern_id > 0:
+                self.pattern_id = pattern_id
+            return False
+        if self.pattern_id is not None and pattern_id != self.pattern_id and pattern_id > 0:
+            if self.grants > 0:
+                self.grants -= 1
+                self.pattern_id = pattern_id
+                self.allow_finish = True
+                self.pausing = False
+                return False
+            self.pattern_id = pattern_id
+            self.pausing = True
+            return True
+        if self.pattern_id is None:
+            self.pattern_id = pattern_id
+        if self.allow_finish:
+            if progress < 0.95:
+                self.allow_finish = False
+            return False
+        if progress >= 0.999 and not self.pausing:
+            self.pausing = True
+            return True
+        return False
+
+
 def shown_playback(session_on: bool, drawing: bool, *, settled: bool = True) -> str:
     """Player state owned by the integration switch, not by ``powerOn``.
 

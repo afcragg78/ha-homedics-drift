@@ -10,7 +10,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .coordinator import DriftConfigEntry, DriftCoordinator
 from .entity import DriftEntity
-from .gallery import gallery_names, gallery_picture
+from .gallery import CATEGORY_ORDER, gallery_categories, gallery_names, gallery_picture
 
 
 async def async_setup_entry(
@@ -157,6 +157,14 @@ class DriftGallerySelect(DriftEntity, SelectEntity):
     def entity_picture(self) -> str | None:
         """Preview of the design that is currently chosen."""
         return gallery_picture(self.current_option or "")
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        """Category for every shipped design, so a dashboard can group them."""
+        return {
+            "categories": gallery_categories(),
+            "category_order": list(CATEGORY_ORDER),
+        }
 
     @override
     async def async_select_option(self, option: str) -> None:

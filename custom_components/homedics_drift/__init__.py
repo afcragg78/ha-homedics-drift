@@ -9,6 +9,7 @@ this repository is not the author.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from homeassistant.const import EVENT_HOMEASSISTANT_STOP, Platform
@@ -36,11 +37,31 @@ PLATFORMS: list[Platform] = [
 
 
 async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
-    """Register pattern services once for every table."""
+    """Register pattern services and the dashboard card once."""
+    from .http import DriftPathView
     from .services import async_setup_services
 
     await async_setup_services(hass)
+    if not hass.data.get(f"{DOMAIN}_card"):
+        await _async_register_card(hass)
+        hass.http.register_view(DriftPathView())
+        hass.data[f"{DOMAIN}_card"] = True
     return True
+
+
+async def _async_register_card(hass: HomeAssistant) -> None:
+    """Serve the card and ask the frontend to load it. No HACS frontend step."""
+    from homeassistant.components.frontend import add_extra_js_url
+
+    path = Path(__file__).parent / "www" / "drift-table-card.js"
+    url = f"/{DOMAIN}/drift-table-card.js"
+    try:
+        from homeassistant.components.http import StaticPathConfig
+
+        await hass.http.async_register_static_paths([StaticPathConfig(url, str(path), True)])
+    except Exception:
+        hass.http.register_static_path(url, str(path), True)
+    add_extra_js_url(hass, url)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: DriftConfigEntry) -> bool:
