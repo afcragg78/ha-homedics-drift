@@ -1,25 +1,9 @@
 // Drift table card. Loaded by the integration; no separate frontend install.
 // Theme colors come from Home Assistant CSS variables. Frosted glass is opt-in.
 
-const SHOW = ["show_now", "show_gallery", "show_create", "show_storage", "show_clean", "show_light", "show_speed"];
+import { resolveDriftEntities } from "./drift-table-resolve.js";
 
-const SUFFIX = {
-  player: "-player",
-  light: "-light",
-  power: "-power",
-  speed: "-speed",
-  gallery: "-gallery",
-  preview: "-preview",
-  clean: "-clean-sand",
-  drawAi: "-draw-with-ai",
-  favorite: "-favorite",
-  prompt: "-ai-prompt",
-  ai: "-ai-job",
-  slots: "-slots",
-  now: "-now-playing",
-  favorites: "-favorites",
-  stopAfter: "-stop-after",
-};
+const SHOW = ["show_now", "show_gallery", "show_create", "show_storage", "show_clean", "show_light", "show_speed"];
 
 class DriftTableCard extends HTMLElement {
   constructor() {
@@ -87,27 +71,7 @@ class DriftTableCard extends HTMLElement {
 
   _resolve() {
     const hass = this._hass;
-    const entities = (hass && hass.entities) || {};
-    let deviceId = this._config.device || this._config.device_id || null;
-    if (!deviceId && this._config.entity && entities[this._config.entity]) {
-      deviceId = entities[this._config.entity].device_id || null;
-    }
-    const ids = deviceId
-      ? Object.keys(entities).filter((id) => entities[id] && entities[id].device_id === deviceId)
-      : Object.keys(entities);
-    const found = {};
-    const tiles = [];
-    ids.forEach((id) => {
-      const unique = (entities[id] && entities[id].unique_id) || "";
-      if (unique.includes("-gallery-tile-")) {
-        tiles.push(id);
-        return;
-      }
-      Object.keys(SUFFIX).forEach((key) => {
-        if (unique.endsWith(SUFFIX[key])) found[key] = id;
-      });
-    });
-    return { deviceId, found, tiles };
+    return resolveDriftEntities((hass && hass.entities) || {}, this._config || {});
   }
 
   _ensure() {
@@ -128,6 +92,7 @@ class DriftTableCard extends HTMLElement {
         ha-card.drift-table.minimal { --ha-card-background: transparent; --ha-card-box-shadow: none; box-shadow: none; }
         .body { padding: 16px; display: flex; flex-direction: column; gap: 18px; }
         h2 { margin: 0 0 8px; font-size: 1.05rem; font-weight: 500; color: var(--primary-text-color); }
+        .missing { margin: 0; color: var(--primary-text-color); }
         .stage { position: relative; width: min(100%, 280px); margin: 0 auto; aspect-ratio: 1; }
         .ring { position: absolute; inset: 0; width: 100%; height: 100%; }
         .ring circle.track { fill: none; stroke: var(--divider-color); stroke-width: 6; }
@@ -165,6 +130,7 @@ class DriftTableCard extends HTMLElement {
         @media (max-width: 520px) { .body { padding: 12px; } }
       </style>
       <div class="body">
+        <p class="missing" hidden>This card could not find the Drift player. Set the card to that media player, or to the Drift device.</p>
         <section class="now"><h2>Now Playing</h2>
           <div class="stage">
             <svg class="ring" viewBox="0 0 100 100" aria-hidden="true"><circle class="track" cx="50" cy="50" r="46"></circle><circle class="value" cx="50" cy="50" r="46"></circle></svg>
@@ -196,7 +162,9 @@ class DriftTableCard extends HTMLElement {
 
   _bind(card) {
     const call = (domain, service, data) => {
-      if (this._hass) this._hass.callService(domain, service, data);
+      if (!this._hass) return;
+      if (data && Object.prototype.hasOwnProperty.call(data, "entity_id") && !data.entity_id) return;
+      this._hass.callService(domain, service, data);
     };
     card.querySelector(".transport").addEventListener("click", (event) => {
       const button = event.target.closest("button");
@@ -287,6 +255,8 @@ class DriftTableCard extends HTMLElement {
     this._deviceId = resolved.deviceId;
     this._tiles = resolved.tiles;
     const card = this._card;
+    const missing = card.querySelector(".missing");
+    if (missing) missing.hidden = Boolean(this._found.player);
     card.querySelector(".now").hidden = !this._shown("show_now");
     card.querySelector(".gallery").hidden = !this._shown("show_gallery");
     card.querySelector(".create").hidden = !this._shown("show_create");
@@ -525,7 +495,8 @@ class DriftTableCard extends HTMLElement {
       if (!state) return;
       const friendly = state.attributes.friendly_name || "";
       Object.keys(this._categories || {}).forEach((name) => {
-        if (friendly.endsWith(name)) byName[name] = state;
+        const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+        if (friendly.endsWith(name) || (slug && id.endsWith("_" + slug))) byName[name] = state;
       });
     });
     const key = names.join("|") + "|" + this._picked;

@@ -53,14 +53,16 @@ async def _async_register_card(hass: HomeAssistant) -> None:
     """Serve the card and ask the frontend to load it. No HACS frontend step."""
     from homeassistant.components.frontend import add_extra_js_url
 
-    path = Path(__file__).parent / "www" / "drift-table-card.js"
-    url = f"/{DOMAIN}/drift-table-card.js"
+    www = Path(__file__).parent / "www"
+    root = f"/{DOMAIN}"
+    # Query string so a browser that cached the previous card fetches this one.
+    url = f"{root}/drift-table-card.js?v=2"
     try:
         from homeassistant.components.http import StaticPathConfig
 
-        await hass.http.async_register_static_paths([StaticPathConfig(url, str(path), True)])
+        await hass.http.async_register_static_paths([StaticPathConfig(root, str(www), True)])
     except Exception:
-        hass.http.register_static_path(url, str(path), True)
+        hass.http.register_static_path(root, str(www), True)
     add_extra_js_url(hass, url)
 
 

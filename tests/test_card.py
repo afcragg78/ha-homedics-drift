@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
-CARD = Path(__file__).resolve().parents[1] / "custom_components" / "homedics_drift" / "www" / "drift-table-card.js"
+ROOT = Path(__file__).resolve().parents[1]
+CARD = ROOT / "custom_components" / "homedics_drift" / "www" / "drift-table-card.js"
 
 
 def test_card_uses_theme_variables_and_optional_styles() -> None:
@@ -24,3 +26,10 @@ def test_card_uses_theme_variables_and_optional_styles() -> None:
         assert flag in text
     assert "path_known" in text
     assert "requestAnimationFrame" in text
+    assert "could not find the Drift player" in text
+    assert "resolveDriftEntities" in text
+
+
+def test_card_resolves_entities_without_unique_id() -> None:
+    """Frontend registry entries omit unique_id. The matcher must still bind."""
+    subprocess.run(["node", "tests/test_card_resolve.mjs"], cwd=ROOT, check=True)

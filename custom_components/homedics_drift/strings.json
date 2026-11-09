@@ -117,6 +117,9 @@
       },
       "gallery_preview": {
         "name": "Gallery preview"
+      },
+      "gallery_tile": {
+        "name": "Gallery design"
       }
     },
     "text": {
