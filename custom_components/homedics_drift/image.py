@@ -85,6 +85,7 @@ class DriftGalleryTile(DriftEntity, ImageEntity):
     """One gallery picture, so a dashboard can show a grid of them."""
 
     _attr_has_entity_name = True
+    _attr_translation_key = "gallery_tile"
     _attr_content_type = "image/png"
     _attr_icon = "mdi:image-filter-vintage"
 

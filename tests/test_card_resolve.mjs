@@ -1,0 +1,63 @@
+import assert from "node:assert/strict";
+import { resolveDriftEntities } from "../custom_components/homedics_drift/www/drift-table-resolve.js";
+
+const device = "drift-device";
+const stem = "living_room_ks2206011280_62_00_a1_20_99_74";
+
+function entry(extra = {}) {
+  return { device_id: device, platform: "homedics_drift", ...extra };
+}
+
+const entities = {
+  [`media_player.${stem}_player`]: entry({ translation_key: "player" }),
+  [`switch.${stem}_power`]: entry({ translation_key: "power" }),
+  [`light.${stem}_light`]: entry({ translation_key: "lamp" }),
+  [`number.${stem}_speed`]: entry({ translation_key: "speed" }),
+  [`button.${stem}_clean_sand`]: entry({ translation_key: "clean_sand" }),
+  [`select.${stem}_gallery_design`]: entry({ translation_key: "gallery" }),
+  [`select.${stem}_favorites`]: entry({ translation_key: "favorites" }),
+  [`text.${stem}_ai_prompt`]: entry({ translation_key: "ai_prompt" }),
+  [`sensor.${stem}_pattern_slots`]: entry(),
+  [`sensor.${stem}_now_playing`]: entry({ translation_key: "now_playing" }),
+  "switch.living_room_drift_table_stop_after_this_design": entry({ translation_key: "stop_after" }),
+  [`switch.${stem}_clean_before_pattern`]: entry({ translation_key: "clean_before" }),
+  [`image.${stem}_now_playing_preview`]: entry({ translation_key: "preview" }),
+  [`image.${stem}_gallery_preview`]: entry({ translation_key: "gallery_preview" }),
+  "image.living_room_drift_table_drift_away": entry(),
+  [`image.${stem}_lotus_mandala`]: entry({ translation_key: "gallery_tile" }),
+  "light.other_room_lamp": { device_id: "other", platform: "hue", translation_key: "lamp" },
+};
+
+for (const value of Object.values(entities)) {
+  assert.equal(value.unique_id, undefined);
+}
+
+const resolved = resolveDriftEntities(entities, {
+  entity: `media_player.${stem}_player`,
+});
+
+assert.equal(resolved.deviceId, device);
+assert.equal(resolved.found.player, `media_player.${stem}_player`);
+assert.equal(resolved.found.power, `switch.${stem}_power`);
+assert.equal(resolved.found.light, `light.${stem}_light`);
+assert.equal(resolved.found.speed, `number.${stem}_speed`);
+assert.equal(resolved.found.clean, `button.${stem}_clean_sand`);
+assert.equal(resolved.found.gallery, `select.${stem}_gallery_design`);
+assert.equal(resolved.found.favorites, `select.${stem}_favorites`);
+assert.equal(resolved.found.prompt, `text.${stem}_ai_prompt`);
+assert.equal(resolved.found.slots, `sensor.${stem}_pattern_slots`);
+assert.equal(resolved.found.now, `sensor.${stem}_now_playing`);
+assert.equal(resolved.found.stopAfter, "switch.living_room_drift_table_stop_after_this_design");
+assert.equal(resolved.found.cleanBefore, `switch.${stem}_clean_before_pattern`);
+assert.equal(resolved.found.preview, `image.${stem}_now_playing_preview`);
+assert.deepEqual(resolved.tiles.sort(), [
+  `image.${stem}_lotus_mandala`,
+  "image.living_room_drift_table_drift_away",
+].sort());
+
+const missing = resolveDriftEntities(
+  { "switch.kitchen_power": entry({ translation_key: "power" }) },
+  { device },
+);
+assert.equal(missing.found.player, undefined);
+assert.equal(missing.tiles.length, 0);
