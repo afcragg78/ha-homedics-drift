@@ -81,7 +81,7 @@ class _Table:
     async def async_rename_pattern(self, pattern_id, name):
         self.calls.append(("rename_pattern", pattern_id, name))
 
-    async def async_ai_draw(self, prompt, *, name=None, play=False):
+    async def async_ai_draw(self, prompt, *, name=None, play=False, style="contours"):
         self.calls.append(("ai_draw", prompt, name, play))
 
     async def async_generate_pattern(self, kind, params, *, name=None, play=False):
