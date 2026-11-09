@@ -10,6 +10,8 @@ Home Assistant custom integration for the Bluetooth HoMedics Drift sand tables. 
 
 All credit for the protocol goes to Josh Lannin's [Drifted](https://github.com/joshlannin/drifted) project. Drifted reverse-engineered how these Bluetooth sand tables speak, tested a generation-1 16" table, and published the handshake, packet format, failure modes, and the vectors in `spec/vectors/protocol.json`. Drifted is MIT licensed, copyright Altimix LLC.
 
+The **Sisyphus Classics** gallery tracks are converted from Bruce Shapiro's [sisyphus](https://github.com/Dithermaster/sisyphus) repository, MIT licensed, Copyright (c) 2018 Dithermaster. The license is in `custom_components/homedics_drift/sisyphus/LICENSE`.
+
 This Home Assistant integration was converted from Drifted using Grok Bot.
 
 afcragg78 posted this repository. They are not the author of Drifted or of this conversion. `manifest.json` lists `@afcragg78` under `codeowners` only because Home Assistant requires a GitHub handle there. That entry is the person who posted the repository, not an authorship credit.
@@ -176,7 +178,7 @@ actions:
 
 ## Gallery
 
-Forty designs are built into the integration, in six groups: Mandalas, Florals, Geometric, Spirals, Waves, and Cosmic. They are generated in code, not downloaded. Each one is a single continuous line from the centre to the rim. Petals, stars, and rings are joined along the centre or the rim, so the ball does not cut straight across the sand between copies. The pictures are tan sand with dark grooves.
+The built-in designs are in Mandalas, Florals, Geometric, Spirals, Waves, Cosmic, and Sisyphus Classics. The first six groups are generated in code. Sisyphus Classics are Bruce Shapiro's MIT-licensed tracks, converted to the table's point limit. The older sparse drawings from the first gallery (Lotus Mandala, Temple Rose, Moonflower, Nebula Spiral, and the rest of that set) are no longer offered, and their leftover picture entities are removed on startup. Each shipped path is one continuous line. The pictures are tan sand with dark grooves.
 
 **Random design** uses the same kinds of paths, with a small seeded change, so a random send stays as dense as the named design.
 
@@ -185,13 +187,15 @@ Pick one in **Gallery design**. The row picture and **Gallery preview** show tha
 ```yaml
 action: homedics_drift.add_gallery_design
 data:
-  name: Lotus Mandala
+  name: Drift Away
   play: true
 ```
 
 `play: true` starts it only while Power is on. **Random design** uploads a new variation of one of those designs. The same seed always repeats; each press uses a new seed.
 
 ![Gallery contact sheet](docs/gallery-contact-sheet.png)
+
+![Sisyphus Classics](docs/sisyphus-classics.png)
 
 You do not need to edit a dashboard. On the table's device page: pick a picture under **Gallery design**, turn on **Favorite** if you want it again, then press **Send gallery design**. Later, choose it from **Favorites**.
 
@@ -203,26 +207,26 @@ columns: 2
 square: false
 cards:
   - type: picture-entity
-    entity: image.YOUR_TABLE_lotus_mandala
-    name: Lotus Mandala
+    entity: image.YOUR_TABLE_drift_away
+    name: Drift Away
     show_state: false
     tap_action:
       action: perform-action
       perform_action: homedics_drift.add_gallery_design
       target: {}
       data:
-        name: Lotus Mandala
+        name: Drift Away
         play: true
   - type: picture-entity
-    entity: image.YOUR_TABLE_nebula_spiral
-    name: Nebula Spiral
+    entity: image.YOUR_TABLE_gears
+    name: Gears
     show_state: false
     tap_action:
       action: perform-action
       perform_action: homedics_drift.add_gallery_design
       target: {}
       data:
-        name: Nebula Spiral
+        name: Gears
         play: true
 ```
 
@@ -264,11 +268,11 @@ Draw on a gallery picture uploads that design and plays it only while Power is o
 
 ### Patterns from other people
 
-This integration does not include anyone else's pattern files.
+[Sandify Patterns](https://github.com/jeffeb3/sandify-patterns) by Jeff Eberl is MIT licensed (Copyright 2020 Jeff Eberl). It contains `.thr` files. You may import one with `homedics_drift.import_pattern_url` and an `https` link to a single `.thr` file, a `.gcode` file, or a zip of `.thr` files. A GitHub blob link is turned into the raw file. A long track is resampled so it fits the table.
 
-[Sandify Patterns](https://github.com/jeffeb3/sandify-patterns) by Jeff Eberl is MIT licensed (Copyright 2020 Jeff Eberl). It contains `.thr` files. You may import one with `homedics_drift.import_pattern_url` and an `https` link to a single `.thr` file or a zip of them. Files that are too long for the table are skipped. Several files in that repository are millions of points and will be refused. The MIT notice has to stay with those files if you share them again.
+[Dithermaster/sisyphus](https://github.com/Dithermaster/sisyphus) is the MIT-licensed source of the Sisyphus Classics already in the gallery. The same import service can fetch one more track from a raw `https://raw.githubusercontent.com/.../*.thr` link if you want a file that was not included.
 
-Sisyphus tracks, Reddit posts, and other forum packs are the author's own copyright unless they say MIT, CC, or public domain. Do not import those. Sandify's own site says the same thing. We are not lawyers.
+[fly115/Sandtable-patterns](https://github.com/fly115/Sandtable-patterns) has no license, so none of those files are shipped here. If you have the right to use one yourself, `import_pattern_url` accepts a raw GitHub `.thr` or `.gcode` URL. Other forum packs stay the author's copyright unless they say MIT, CC, or public domain. We are not lawyers.
 
 ## What this integration does not do
 

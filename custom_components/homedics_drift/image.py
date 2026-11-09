@@ -10,7 +10,7 @@ from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 
 from .coordinator import DriftConfigEntry, DriftCoordinator
 from .entity import DriftEntity
-from .gallery import gallery_names, gallery_polar
+from .gallery import gallery_names, gallery_polar, gallery_tile_slug, retired_gallery_slugs
 from .preview import render_preview
 
 
@@ -21,6 +21,7 @@ async def async_setup_entry(
 ) -> None:
     """Create the now-playing preview."""
     coordinator = entry.runtime_data
+    _drop_retired_gallery_tiles(hass, entry)
     async_add_entities(
         [
             DriftPreviewImage(coordinator),
@@ -28,6 +29,26 @@ async def async_setup_entry(
             *[DriftGalleryTile(coordinator, name) for name in gallery_names()],
         ]
     )
+
+
+def _drop_retired_gallery_tiles(hass: HomeAssistant, entry: DriftConfigEntry) -> None:
+    """Remove picture entities for designs that are no longer shipped."""
+    from homeassistant.helpers import entity_registry as er
+
+    registry = er.async_get(hass)
+    prefix = f"{entry.runtime_data.address}-gallery-tile-"
+    entities = getattr(registry, "entities", {})
+    values = entities.values() if hasattr(entities, "values") else entities
+    for entity in list(values):
+        unique_id = getattr(entity, "unique_id", "") or ""
+        if getattr(entity, "config_entry_id", None) != entry.entry_id:
+            continue
+        if not unique_id.startswith(prefix):
+            continue
+        slug = unique_id[len(prefix) :]
+        if slug not in retired_gallery_slugs({slug}):
+            continue
+        registry.async_remove(entity.entity_id)
 
 
 class DriftPreviewImage(DriftEntity, ImageEntity):
@@ -95,7 +116,7 @@ class DriftGalleryTile(DriftEntity, ImageEntity):
         ImageEntity.__init__(self, coordinator.hass)
         self._design = design
         self._attr_name = design
-        slug = "".join(ch.lower() if ch.isalnum() else "-" for ch in design).strip("-")
+        slug = gallery_tile_slug(design)
         self._attr_unique_id = f"{coordinator.address}-gallery-tile-{slug}"
 
     async def async_image(self) -> bytes | None:

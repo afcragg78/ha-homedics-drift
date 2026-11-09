@@ -20,6 +20,9 @@ from custom_components.homedics_drift.patterns import (
     deletion_refusal,
     find_stock_clean,
     densify,
+    documents_from_download,
+    gcode_to_thr,
+    github_raw_url,
     inbox_names,
     label_patterns,
     paginate,
@@ -169,7 +172,23 @@ def test_favorites_and_https_imports_are_local_rules() -> None:
         archive.writestr("pack/rose.thr", "0 0\n0.2 1\n")
         archive.writestr("notes.txt", "hello")
     docs = documents_from_download("pack.zip", packed.getvalue())
-    assert docs == [("rose", "0 0\n0.2 1\n")]
+    assert docs[0][0] == "rose"
+    assert parse_thr(docs[0][1])[0][1] == 0
+
+
+def test_github_blob_and_gcode_become_a_thr_path() -> None:
+    raw = github_raw_url(
+        "https://github.com/fly115/Sandtable-patterns/blob/master/example.thr"
+    )
+    assert raw == "https://raw.githubusercontent.com/fly115/Sandtable-patterns/master/example.thr"
+    assert github_raw_url("https://raw.githubusercontent.com/example/a.thr").endswith("a.thr")
+    text = gcode_to_thr("G21\nG90\nG1 X0 Y0\nG1 X10 Y0\nG1 X10 Y10\nG1 X0 Y10\n")
+    polar = parse_thr(text)
+    assert len(polar) >= 4
+    assert max(rho for _theta, rho in polar) <= 1
+    loaded = documents_from_download("square.gcode", text.encode() if False else b"G1 X0 Y0\nG1 X8 Y0\nG1 X8 Y8\n")
+    assert loaded[0][0] == "square"
+    assert len(parse_thr(loaded[0][1])) >= 2
 
 
 def test_preview_is_a_png() -> None:

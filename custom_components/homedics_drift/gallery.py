@@ -12,6 +12,7 @@ import random
 from dataclasses import dataclass
 
 from .patterns import MAX_POINTS, PatternRejected, densify
+from .sisyphus_tracks import CATALOG, track_polar
 
 CATEGORY_ORDER: tuple[str, ...] = (
     "Mandalas",
@@ -20,6 +21,7 @@ CATEGORY_ORDER: tuple[str, ...] = (
     "Spirals",
     "Waves",
     "Cosmic",
+    "Sisyphus Classics",
 )
 _TARGET = 9_000
 
@@ -295,6 +297,8 @@ def _stack(*parts: list[tuple[float, float]], rim: bool = False) -> list[tuple[f
 
 
 def _build(kind: str, rng: random.Random | None = None) -> list[tuple[float, float]]:
+    if kind.startswith("sisyphus:"):
+        return track_polar(kind.split(":", 1)[1])
     phase = 0.0 if rng is None else rng.uniform(0.0, 0.45)
     pinch = 1.15 if rng is None else rng.uniform(0.9, 1.35)
     made = _COMPOSE[kind](phase, pinch)
@@ -632,16 +636,12 @@ _COMPOSE = _compose_table()
 
 
 GALLERY: tuple[GalleryDesign, ...] = (
-    GalleryDesign("Lotus Mandala", "lotus", "Mandalas"),
     GalleryDesign("Twelve Fold Crown", "crown", "Mandalas"),
     GalleryDesign("Drift Away", "drift_away", "Mandalas"),
     GalleryDesign("Palace Lattice", "palace", "Mandalas"),
     GalleryDesign("Sun Court", "sun_court", "Mandalas"),
     GalleryDesign("Midnight Mandala", "midnight", "Mandalas"),
     GalleryDesign("Saffron Wheel", "saffron", "Mandalas"),
-    GalleryDesign("Temple Rose", "temple", "Mandalas"),
-    GalleryDesign("Moonflower", "moonflower", "Florals"),
-    GalleryDesign("Dahlia Crown", "dahlia", "Florals"),
     GalleryDesign("Peony Weave", "peony", "Florals"),
     GalleryDesign("Iris Spiral", "iris", "Florals"),
     GalleryDesign("Camellia Rings", "camellia", "Florals"),
@@ -654,24 +654,20 @@ GALLERY: tuple[GalleryDesign, ...] = (
     GalleryDesign("Octagon Well", "octagon", "Geometric"),
     GalleryDesign("Diamond Ring", "diamond", "Geometric"),
     GalleryDesign("Cathedral Star", "cathedral", "Geometric"),
-    GalleryDesign("Golden Whorl", "whorl", "Spirals"),
     GalleryDesign("Nautilus", "nautilus", "Spirals"),
-    GalleryDesign("Fern Curl", "fern", "Spirals"),
     GalleryDesign("Double Helix", "helix", "Spirals"),
     GalleryDesign("Spiral Bloom", "spiral_bloom", "Spirals"),
     GalleryDesign("Fibonacci Arms", "fibonacci", "Spirals"),
-    GalleryDesign("Tide Circles", "tide", "Waves"),
     GalleryDesign("Scalloped Tide", "scallop", "Waves"),
-    GalleryDesign("Ripple Well", "ripple", "Waves"),
-    GalleryDesign("Harmonic Lace", "lace", "Waves"),
     GalleryDesign("Silk Ripple", "silk", "Waves"),
     GalleryDesign("Ring Tide", "ring_tide", "Waves"),
-    GalleryDesign("Nebula Spiral", "nebula", "Cosmic"),
-    GalleryDesign("Twin Galaxies", "twin", "Cosmic"),
-    GalleryDesign("Orbit Weave", "orbit", "Cosmic"),
     GalleryDesign("Aurora Crown", "aurora", "Cosmic"),
     GalleryDesign("Comet Garden", "comet", "Cosmic"),
     GalleryDesign("Eclipse Rose", "eclipse", "Cosmic"),
+    *(
+        GalleryDesign(name, f"sisyphus:{key}", "Sisyphus Classics")
+        for name, key in CATALOG
+    ),
 )
 
 
@@ -692,6 +688,17 @@ def gallery_picture(name: str) -> str | None:
         cached = "data:image/png;base64," + base64.b64encode(png).decode("ascii")
         _PICTURES[name] = cached
     return cached
+
+
+def gallery_tile_slug(name: str) -> str:
+    """The unique-id suffix for one gallery picture."""
+    return "".join(ch.lower() if ch.isalnum() else "-" for ch in name).strip("-")
+
+
+def retired_gallery_slugs(stored: set[str]) -> set[str]:
+    """Picture slugs that are no longer in the gallery and should leave the registry."""
+    current = {gallery_tile_slug(name) for name in gallery_names()}
+    return {slug for slug in stored if slug not in current}
 
 
 def gallery_names() -> list[str]:

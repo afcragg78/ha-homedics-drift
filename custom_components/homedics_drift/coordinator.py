@@ -63,7 +63,7 @@ from .patterns import (
     deletion_refusal,
     documents_from_download,
     find_stock_clean,
-    https_pattern_url,
+    github_raw_url,
     inbox_names,
     reusable_id,
     label_patterns,
@@ -1460,7 +1460,7 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         too long is skipped. The clean pattern is never replaced.
         """
         try:
-            checked = https_pattern_url(url)
+            checked = github_raw_url(url)
         except PatternRejected as err:
             raise HomeAssistantError(err.message) from err
         session = async_get_clientsession(self.hass)

@@ -91,15 +91,126 @@ def wire_point(theta: float, rho: float) -> tuple[int, int]:
 
 
 def thr_to_wire(text: str) -> list[tuple[int, int]]:
-    """Parse, densify, and convert a ``.thr`` document to wire points."""
-    polar = densify(parse_thr(text))
-    if not polar:
+    """Parse, densify, and convert a ``.thr`` document to wire points.
+
+    A long track is resampled more coarsely until it fits the table. A short
+    track still uses the usual 0.01 step.
+    """
+    source = parse_thr(text)
+    if not source:
         raise PatternRejected("the pattern file has no points")
+    step = 0.01
+    polar = densify(source, max_step=step)
+    while len(polar) > MAX_POINTS and step < 0.06:
+        step *= 1.25
+        polar = densify(source, max_step=step)
     if len(polar) > MAX_POINTS:
         raise PatternRejected(
             f"the pattern has {len(polar)} points; the limit is {MAX_POINTS}"
         )
     return [wire_point(theta, rho) for theta, rho in polar]
+
+
+def _thin_polar(points: list[tuple[float, float]], spacing: float) -> list[tuple[float, float]]:
+    if spacing <= 0 or len(points) < 2:
+        return points
+    kept = [points[0]]
+    for theta, rho in points[1:]:
+        prev_theta, prev_rho = kept[-1]
+        distance = math.hypot(rho - prev_rho, (theta - prev_theta) * max(rho, prev_rho, 0.02))
+        if distance >= spacing:
+            kept.append((theta, rho))
+    if kept[-1] != points[-1]:
+        kept.append(points[-1])
+    return kept
+
+
+def fit_thr_text(text: str) -> str:
+    """A ``.thr`` document the table can store, coarsened only when it is too long."""
+    source = parse_thr(text)
+    if len(source) < 2:
+        raise PatternRejected("the pattern file has no points")
+    step = 0.01
+    thinned = source
+    polar = densify(thinned, max_step=step)
+    while len(polar) > MAX_POINTS - 1000 and step < 0.06:
+        step *= 1.25
+        thinned = _thin_polar(source, step)
+        polar = densify(thinned, max_step=step)
+    if len(polar) > MAX_POINTS:
+        raise PatternRejected(
+            f"the pattern has {len(polar)} points; the limit is {MAX_POINTS}"
+        )
+    lines = [f"{theta:.6f} {min(1.0, max(0.0, rho)):.6f}" for theta, rho in polar]
+    return "\n".join(lines) + "\n"
+
+
+def github_raw_url(url: str) -> str:
+    """Turn a GitHub blob link into the raw file. Other https links stay as they are."""
+    cleaned = https_pattern_url(url)
+    parsed = urlparse(cleaned)
+    host = (parsed.hostname or "").lower()
+    if host != "github.com":
+        return cleaned
+    parts = [part for part in parsed.path.split("/") if part]
+    if len(parts) < 5 or parts[2] != "blob":
+        return cleaned
+    user, repo, _blob, ref, *rest = parts
+    return f"https://raw.githubusercontent.com/{user}/{repo}/{ref}/{'/'.join(rest)}"
+
+
+def gcode_to_thr(text: str) -> str:
+    """Turn Sandify-style G0/G1 moves into one theta-rho path inside the disc."""
+    cursor: tuple[float, float] | None = None
+    points: list[tuple[float, float]] = []
+    for raw in text.splitlines():
+        line = raw.split(";", 1)[0].strip()
+        if not line:
+            continue
+        parts = line.replace(",", " ").split()
+        command = parts[0].upper()
+        if not command.startswith("G"):
+            continue
+        values: dict[str, float] = {}
+        for part in parts[1:]:
+            if len(part) < 2 or part[0].upper() not in "XYZ":
+                continue
+            try:
+                values[part[0].upper()] = float(part[1:])
+            except ValueError as err:
+                raise PatternRejected("that gcode move could not be read") from err
+        if cursor is None and ("X" not in values or "Y" not in values):
+            continue
+        x = values.get("X", cursor[0] if cursor else 0.0)
+        y = values.get("Y", cursor[1] if cursor else 0.0)
+        cursor = (x, y)
+        if command[:3] in {"G0", "G00", "G1", "G01", "G2", "G02", "G3", "G03"} or command in {
+            "G0",
+            "G00",
+            "G1",
+            "G01",
+        }:
+            points.append(cursor)
+    if len(points) < 2:
+        raise PatternRejected("that gcode file has no drawing moves")
+    cx = sum(point[0] for point in points) / len(points)
+    cy = sum(point[1] for point in points) / len(points)
+    scale = max(math.hypot(point[0] - cx, point[1] - cy) for point in points) or 1.0
+    polar: list[tuple[float, float]] = []
+    previous = 0.0
+    for x, y in points:
+        dx = (x - cx) / scale
+        dy = (y - cy) / scale
+        rho = min(1.0, math.hypot(dx, dy))
+        theta = math.atan2(dy, dx)
+        while theta - previous > math.pi:
+            theta -= 2 * math.pi
+        while theta - previous < -math.pi:
+            theta += 2 * math.pi
+        previous = theta
+        polar.append((theta, rho))
+    lines = [f"{theta:.6f} {rho:.6f}" for theta, rho in polar]
+    return fit_thr_text("\n".join(lines) + "\n")
 
 
 def paginate(points: list[tuple[int, int]], page_size: int = PAGE_SIZE) -> list[list[tuple[int, int]]]:
@@ -510,10 +621,15 @@ def documents_from_download(filename: str, body: bytes) -> list[tuple[str, str]]
             raise PatternRejected("that zip has no .thr patterns")
         return found
     text = body.decode("utf-8", errors="replace")
-    if not _looks_like_thr(text):
-        raise PatternRejected("that file is not a .thr pattern")
     stem = Path(urlparse(filename).path).stem or "Imported"
-    return [(stem, text)]
+    lower = Path(urlparse(filename).path).suffix.lower()
+    if lower in {".gcode", ".gco", ".nc"} or (
+        not _looks_like_thr(text) and text.lstrip().upper().startswith("G")
+    ):
+        return [(stem, gcode_to_thr(text))]
+    if not _looks_like_thr(text):
+        raise PatternRejected("that file is not a .thr or gcode pattern")
+    return [(stem, fit_thr_text(text))]
 
 
 def inbox_names(filenames: list[str], library: PatternLibrary) -> list[str]:

@@ -160,7 +160,9 @@ async def async_setup_services(hass: HomeAssistant) -> None:
 
 async def _coordinator(hass: HomeAssistant, call: ServiceCall) -> DriftCoordinator:
     """The one table named by the service call."""
-    extracted = async_extract_config_entry_ids(hass, call)
+    # Home Assistant 2026 takes the service call only. Passing hass first makes
+    # it read hass.hass and the Draw button fails.
+    extracted = async_extract_config_entry_ids(call)
     if hasattr(extracted, "__await__"):
         extracted = await extracted
     found: list[DriftCoordinator] = []
