@@ -41,10 +41,19 @@ def test_gallery_has_many_distinct_named_designs() -> None:
     assert "Sierpinski" not in names
     assert "Triangle Weave" not in names
     assert "Drift Away" in names
+    assert "Cretan Labyrinth" in names
+    assert "Ring Maze" in names
+    assert "Jigsaw Spiral" not in names
+    assert "Square Maze" not in names
+    assert "Fine Hilbert" in names
+    assert "Hilbert Fill" in names
+    assert "Tiger Study" not in names
     assert "Gears" in names
     assert "Yin Yang" in names
     assert len(GALLERY) == len(names)
     categories = gallery_categories()
+    assert "Mazes & Fills" in categories.values()
+    assert "Contours" not in categories.values()
     assert set(categories.values()) == set(CATEGORY_ORDER)
     assert list(dict.fromkeys(categories[name] for name in names)) == list(CATEGORY_ORDER)
 
@@ -62,6 +71,24 @@ def test_every_gallery_design_is_a_valid_uploadable_path() -> None:
         assert wire[0][1] == 0
         assert wire[-1][1] == 50000
         assert gallery_thr(name) == text
+
+
+def test_orthogonal_mazes_do_not_draw_a_radius_across_the_disc() -> None:
+    """A finish or a join must not cut from the centre out across open sand."""
+    from custom_components.homedics_drift.patterns import densify
+
+    for name in ("Random Maze", "Tight Maze", "Drift Maze", "Hilbert Fill", "Fine Hilbert", "Peano Fill"):
+        polar = densify(gallery_polar(name))
+        longest = 0.0
+        index = 0
+        while index < len(polar):
+            theta, rho = polar[index]
+            end = index + 1
+            while end < len(polar) and abs(polar[end][0] - theta) < 0.05:
+                end += 1
+            longest = max(longest, abs(polar[end - 1][1] - rho))
+            index = max(end, index + 1)
+        assert longest < 0.55, name
 
 
 def test_random_gallery_is_seeded_and_not_the_canonical_name() -> None:

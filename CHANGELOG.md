@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.3.0
+
+- Gallery category **Mazes & Fills**: Cretan Labyrinth, Ring Maze, Random Maze, Tight Maze, Drift Maze, Hilbert Fill, Fine Hilbert, and Peano Fill. Each is one continuous line. Jigsaw Spiral is not included.
+
 ## 1.2.1
 
 - The table reconnects on its own after the Bluetooth link drops. The wait starts near 2 seconds, doubles, and stops at 60 seconds.
