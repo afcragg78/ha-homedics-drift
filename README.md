@@ -225,8 +225,8 @@ The picture is one of these symbols, with the forecast high in big digits. Sun, 
 - **sunny** — a sun with pointed rays, and ripples across the table
 - **partlycloudy** — that sun, with some rays behind a cloud
 - **cloudy** — two clouds in drifting lines
-- **hot** — a sun with more rays, when the high reaches the hot threshold
-- **cold** — a frost flake, when the overnight low reaches the cold threshold
+- **hot** — a thermometer with the column near the top, and heat waves beside it
+- **cold** — a thermometer with the column still in the bulb, a small flake, and icicles
 - **clear_night** — a crescent moon and a few small stars
 - **fog** — stacked wavy mist bands
 - **rain** — a cloud and raindrops in slanting rain

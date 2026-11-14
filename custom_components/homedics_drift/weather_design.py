@@ -770,19 +770,6 @@ def scene(name):
         def mist(s, k):
             return 0.026 * math.sin(3.3 * s + 0.55 * k)
         return banks, [(parallel_rows(0, 0.058, mist), Frame())]
-    if name == "hot":
-        # More rays than the fair-weather sun, so the disc reads as blazing.
-        day = sun((0, -0.42), 0.15, 0.36, rays=14, disc=0.14)
-        return [day], [(ring_rows(day.c, day.rmax + 0.06, 0.10), Frame())]
-    if name == "cold":
-        frost = flake((0, -0.42), 0.40)
-        spark = [
-            sun((-0.55, -0.22), 0.05, 0.09, rays=4, disc=0.02),
-            sun((0.55, -0.22), 0.05, 0.09, rays=4, disc=0.02),
-        ]
-        return [frost, *spark], [
-            (parallel_rows(0, 0.09, lambda s, k: 0.012 * math.sin(2.0 * s + 0.4 * k)), Frame())
-        ]
     if name == "hail":
         sky = cloud((0, -0.22), 0.82, 0.30)
         stones = [
@@ -829,104 +816,134 @@ def scene(name):
     )
 
 
-def _stroke_twice(pts):
-    """Outline drawn twice: out along the stroke, back on a parallel just beside it."""
-    sampled = [pts[0]]
-    for p in pts[1:]:
-        if math.dist(sampled[-1], p) > 1e-9:
-            sampled += line(sampled[-1], p)[1:]
-    side = offset(sampled, 0.03)
-    return sampled + side[::-1]
-
-
 def _resample(pts):
     sampled = [pts[0]]
-    for p in pts[1:]:
-        if math.dist(sampled[-1], p) > 1e-9:
-            sampled += line(sampled[-1], p)[1:]
+    for point in pts[1:]:
+        if math.dist(sampled[-1], point) > 1e-9:
+            sampled += line(sampled[-1], point)[1:]
     return sampled
 
 
-def _curl_then_tail(join, tail, hang="above", radius=0.11, turns=2.15):
-    """Curl drawn twice, then the tail, then back just beside the tail.
-
-    The third pass along the curl is the ball travelling out to the tail.
-    Finishes beside the left end of the tail.
-    """
-    curl = _resample(_curl_out(join, hang, radius, turns))
-    tail = _resample(tail)
-    back = offset(tail, 0.032)[::-1]
-    return curl + curl[::-1][1:] + curl[1:] + tail[1:] + back
-
-
-def _tail_then_curl(tail, join, hang="below", radius=0.09, turns=2.05):
-    """Tail into a curl. The curl is drawn twice; the tail comes back beside itself.
-
-    Finishes beside the left end of the tail.
-    """
-    tail = _resample(tail)
-    curl = _resample(_curl_in(join, hang, radius, turns))
-    back = offset(tail, 0.032)[::-1]
-    return tail + curl[1:] + curl[::-1][1:] + line(join, back[0])[1:] + back
-
-
 def _retrace(pts):
-    """The same stroke twice, so a curve does not weave across itself."""
+    """Out and back on the same groove: one stroke, drawn twice."""
     pts = _resample(pts)
     return pts + pts[::-1][1:]
 
 
-def _lay(path, pts):
-    if path and math.dist(path[-1], pts[0]) > 1e-6:
-        path += line(path[-1], pts[0])[1:]
-    path += pts
+def _bow(x0, x1, y, bow):
+    """A horizontal stroke bowed up in the middle."""
+    n = max(3, int(abs(x1 - x0) / STEP))
+    pts = []
+    for i in range(n + 1):
+        t = i / n
+        pts.append((x0 + (x1 - x0) * t, y + bow * math.sin(math.pi * t)))
+    return pts
+
+
+def _open_curl(tip, radius, turns=1.45, up=True):
+    """Open spiral on a rightward tip. About one and a half turns."""
+    inner = max(0.018, radius * 0.26)
+    if up:
+        center = (tip[0], tip[1] + radius)
+        angle, spin = -math.pi / 2, 1.0
+    else:
+        center = (tip[0], tip[1] - radius)
+        angle, spin = math.pi / 2, -1.0
+    arc = abs(turns) * math.pi * (radius + inner)
+    n = max(12, int(arc / STEP))
+    pts = []
+    for i in range(n + 1):
+        t = i / n
+        pts.append(polar(
+            center,
+            radius + (inner - radius) * t,
+            angle + spin * turns * 2 * math.pi * t,
+        ))
+    return pts
+
+
+def _swoosh(x0, x1, y, bow, curl=0.0, up=True):
+    body = _bow(x0, x1, y, bow)
+    if curl <= 0:
+        return body
+    return body + _open_curl(body[-1], curl, 1.45, up)[1:]
+
+
+def _lay_retrace(path, pts):
+    stroke = _retrace(pts)
+    if path and math.dist(path[-1], stroke[0]) > 1e-6:
+        path += line(path[-1], stroke[0])[1:]
+    path += stroke
     return path
 
 
-def _tail_then_curl_same(tail, join, hang="below", radius=0.08, turns=2.1):
-    """An S or wave, drawn twice on the same groove, ending in a tight curl."""
-    tail = _resample(tail)
-    curl = _resample(_curl_in(join, hang, radius, turns))
-    return tail + curl[1:] + curl[::-1][1:] + tail[::-1][1:]
+def _stack(path, rows):
+    for x0, x1, y, bow, curl in rows:
+        _lay_retrace(path, _swoosh(x0, x1, y, bow, curl, up=True))
+    return path
 
 
 def wind_gusts():
-    """Classic wind marks filling the sand below the temperature.
+    """Bowed swooshes under the temperature, in staggered groups of three.
 
-    Five gusts, staggered by length, all blowing left to right. Stacked
-    swooshes, closer speed lines, and an S each end in a tight spiral. Every
-    stroke is drawn twice. The ball drops from the left end of one stroke to
-    the next, so the connecting travel stays on the stack.
+    The long line of each group runs into an open curl. The pen retraces the
+    stroke and only steps down at the shared left end.
     """
     path = []
-    left = -0.36
-
-    # (a) Three swooshes. The curl sits above the long line and stays under the panel.
-    join = (left, -0.18)
-    _lay(path, _curl_then_tail(join, _swoosh(join[0], 0.70, join[1], 0.012), "above", 0.09, 2.35))
-    _lay(path, _stroke_twice(_swoosh(left, 0.46, -0.27, 0.01)))
-    _lay(path, _stroke_twice(_swoosh(left, 0.18, -0.35, 0.008)))
-
-    # (c) Three speed lines. The long one curls at the right, clear of the shorter tails.
-    _lay(path, _tail_then_curl(
-        _swoosh(left, 0.48, -0.46, 0.006), (0.48, -0.46), "above", 0.075, 2.2,
-    ))
-    _lay(path, _stroke_twice(_swoosh(left, 0.26, -0.525, 0.005)))
-    _lay(path, _stroke_twice(_swoosh(left, 0.06, -0.585, 0.004)))
-
-    # (b) A wide S across the lower middle, curl hanging under the right end.
-    _lay(path, _tail_then_curl_same(
-        _s_curve(-0.58, 0.42, -0.68, 0.10), (0.42, -0.68), "below", 0.07, 2.15,
-    ))
-
-    # (a) Two shorter swooshes along the bottom, curl on the left.
-    join = (-0.22, -0.80)
-    _lay(path, _curl_then_tail(join, _swoosh(join[0], 0.22, join[1], 0.006), "above", 0.055, 2.0))
-    _lay(path, _stroke_twice(_swoosh(join[0], 0.16, -0.865, 0.004)))
-    # Extra swooshes in the gaps, so the lower half stays full without crossing a curl.
-    _lay(path, _stroke_twice(_swoosh(-0.62, 0.66, -0.405, 0.01)))
-    _lay(path, _stroke_twice(_swoosh(-0.50, 0.10, -0.755, 0.008)))
+    left = -0.58
+    groups = (
+        (-0.14, (0.52, 0.18, -0.10), 0.04, 0.04),
+        (-0.38, (0.62, 0.26, -0.02), 0.032, 0.038),
+        (-0.60, (0.36, 0.06, -0.16), 0.026, 0.034),
+        (-0.78, (0.16, -0.08, -0.22), 0.02, 0.03),
+    )
+    for y0, ends, bow, curl in groups:
+        for index, x1 in enumerate(ends):
+            _lay_retrace(path, _swoosh(left, x1, y0 + index * 0.055, bow, curl if index == 0 else 0.0))
+    wave = _s_curve(left, 0.34, -0.74, 0.04)
+    _lay_retrace(path, wave[:-1] + _open_curl(wave[-1], 0.04, 1.3, up=False))
     return path
+
+
+def _along_rim(a, b):
+    """Out to the rim, along the edge, and back in."""
+    def onto(point):
+        radius = math.hypot(*point) or 1.0
+        return (point[0] / radius * RIM, point[1] / radius * RIM)
+    rim_a, rim_b = onto(a), onto(b)
+    return line(a, rim_a)[1:] + rim_arc(rim_a, rim_b) + line(rim_b, b)[1:]
+
+
+def _side_gusts():
+    """Three clean gusts on the right of a combined picture."""
+    path = []
+    _stack(path, [
+        (0.02, 0.64, -0.16, 0.04, 0.05),
+        (0.08, 0.40, -0.26, 0.03, 0.0),
+        (0.12, 0.28, -0.35, 0.024, 0.0),
+    ])
+    _stack(path, [
+        (0.04, 0.58, -0.46, 0.028, 0.045),
+        (0.10, 0.36, -0.55, 0.02, 0.0),
+        (0.14, 0.30, -0.63, 0.016, 0.0),
+    ])
+    wave = _s_curve(0.02, 0.46, -0.68, 0.035)
+    _lay_retrace(path, wave[:-1] + _open_curl(wave[-1], 0.04, 1.25, up=False))
+    _stack(path, [
+        (0.06, 0.50, -0.76, 0.02, 0.0),
+        (0.10, 0.42, -0.83, 0.016, 0.0),
+    ])
+    for x1, y, curl in (
+        (0.66, -0.20, 0.0),
+        (0.50, -0.32, 0.0),
+        (0.62, -0.44, 0.04),
+        (0.40, -0.58, 0.0),
+        (0.55, -0.72, 0.0),
+        (0.36, -0.80, 0.0),
+    ):
+        _lay_retrace(path, _swoosh(0.04, x1, y, 0.02, curl))
+    return path
+
 
 
 def _draw_shapes(shapes):
@@ -975,9 +992,9 @@ def _emblem(name):
     elif name == "fog":
         shapes = [band((-0.28, -0.32), 0.55, 0.14, 2.2, 0.4), band((-0.22, -0.55), 0.42, 0.12, 2.4, 1.2)]
     elif name == "hot":
-        shapes = [sun((-0.30, -0.42), 0.12, 0.26, rays=14, disc=0.10)]
+        shapes = [pebble((-0.34, -0.55), 0.14)]
     elif name == "cold":
-        shapes = [flake((-0.28, -0.42), 0.26)]
+        shapes = [pebble((-0.38, -0.58), 0.12), flake((-0.16, -0.40), 0.12, twigs=False)]
     elif name == "alert":
         shapes = [warning_sign((-0.28, -0.42), 0.28)]
     else:
@@ -985,32 +1002,90 @@ def _emblem(name):
     return _draw_shapes(shapes)
 
 
-def _side_gusts():
-    """A short run of the wind marks, on the right of a combined picture."""
-    path = []
-    _lay(path, _curl_then_tail((0.08, -0.20), _swoosh(0.08, 0.68, -0.20, 0.01), "above", 0.07, 2.0))
-    _lay(path, _stroke_twice(_swoosh(0.14, 0.52, -0.32, 0.008)))
-    _lay(path, _tail_then_curl_same(_s_curve(0.05, 0.58, -0.52, 0.06), (0.58, -0.52), "below", 0.06, 1.9))
-    _lay(path, _stroke_twice(_swoosh(0.10, 0.62, -0.66, 0.008)))
-    _lay(path, _stroke_twice(_swoosh(0.16, 0.58, -0.76, 0.006)))
-    _lay(path, _curl_then_tail((0.12, -0.84), _swoosh(0.12, 0.48, -0.84, 0.005), "above", 0.05, 1.8))
-    for y in (-0.26, -0.38, -0.46, -0.60, -0.72):
-        _lay(path, _stroke_twice(_swoosh(0.28, 0.70, y, 0.004)))
-    return path
-
-
 def combined_picture(base):
-    """The main symbol on the left, and curly gusts blowing through the right."""
+    """The symbol on the left, gusts on the right, joined along the rim."""
     symbol = _emblem(base)
     gusts = _side_gusts()
     if not symbol:
         return gusts
-    return symbol + line(symbol[-1], gusts[0])[1:] + gusts
+    # Drop below the symbol, run across in the margin, then rise to the gusts.
+    low = -0.84
+    start, end = symbol[-1], gusts[0]
+    link = (
+        line(start, (start[0], low))[1:]
+        + line((start[0], low), (end[0], low))[1:]
+        + line((end[0], low), end)[1:]
+    )
+    return symbol + link + gusts
+
+
+def _tube(x, y_neck, y_top, half_w):
+    left = [(x - half_w, y_neck), (x - half_w, y_top)]
+    cap = [polar((x, y_top), half_w, math.pi - math.pi * i / 16) for i in range(17)]
+    right = [(x + half_w, y_top), (x + half_w, y_neck)]
+    return _resample(left) + cap[1:] + _resample(right)[1:]
+
+
+def _heat_wave(x0, x1, y, amp, phase):
+    n = max(4, int(abs(x1 - x0) / STEP))
+    pts = []
+    for i in range(n + 1):
+        t = i / n
+        pts.append((x0 + (x1 - x0) * t, y + amp * math.sin(2.5 * math.pi * t + phase)))
+    return pts
+
+
+def hot_picture():
+    """Thermometer with the column near the top, and heat waves beside the glass."""
+    path = []
+    # Waves first, stacked at a shared end so the joins are short vertical steps.
+    for index, y in enumerate((-0.16, -0.28, -0.40, -0.52)):
+        _lay_retrace(path, _heat_wave(0.20, 0.68, y, 0.03, index * 0.6))
+    for index, y in enumerate((-0.22, -0.34, -0.46, -0.58, -0.70)):
+        _lay_retrace(path, _heat_wave(-0.70, -0.22, y, 0.026, index * 0.7))
+    for index, y in enumerate((0.00, -0.08)):
+        _lay_retrace(path, _heat_wave(0.22, 0.62, y, 0.02, index))
+    bulb = pebble((0.0, -0.60), 0.17)
+    path += line(path[-1], (0.0, -0.60))[1:] + bulb.draw((0.0, -0.43))
+    tube = _tube(0.0, -0.45, -0.12, 0.05)
+    path += line(path[-1], tube[0])[1:] + _retrace(tube)
+    column = [(0.0, -0.60), (0.0, -0.18)]
+    path += line(path[-1], column[0])[1:] + _retrace(column)
+    return path
+
+
+def cold_picture():
+    """Thermometer with the column still in the bulb, plus a small flake and icicles."""
+    bulb = pebble((-0.22, -0.50), 0.15)
+    path = bulb.draw((-0.22, -0.35))
+    tube = _tube(-0.22, -0.37, -0.12, 0.045)
+    path += line(path[-1], tube[0])[1:] + _retrace(tube)
+    column = [(-0.22, -0.50), (-0.22, -0.42)]
+    path += line(path[-1], column[0])[1:] + _retrace(column)
+    spark = flake((0.22, -0.32), 0.13, twigs=False)
+    # Leave the tube at its top and step across above the flake, then into its centre.
+    path += line(path[-1], (-0.22, -0.12))[1:]
+    path += line(path[-1], (0.22, -0.12))[1:]
+    path += line(path[-1], spark.c)[1:] + spark.draw((0.22, -0.50))
+    bar = _bow(-0.05, 0.55, -0.62, 0.0)
+    path += line(path[-1], bar[0])[1:] + _retrace(bar)
+    for x_pos, length in ((0.02, 0.08), (0.16, 0.14), (0.30, 0.11), (0.44, 0.07)):
+        icicle = [(x_pos, -0.62), (x_pos, -0.62 - length)]
+        path += line(path[-1], icicle[0])[1:] + _retrace(icicle)
+    for index, y in enumerate((-0.18, -0.30, -0.42, -0.54, -0.66)):
+        _lay_retrace(path, _heat_wave(0.40, 0.72, y, 0.022, index))
+    for index, y in enumerate((-0.26, -0.40)):
+        _lay_retrace(path, _heat_wave(-0.70, -0.42, y, 0.02, index))
+    return path
 
 
 def build(condition, value):
     if condition == "windy":
         path = wind_gusts()
+    elif condition == "hot":
+        path = hot_picture()
+    elif condition == "cold":
+        path = cold_picture()
     elif isinstance(condition, str) and condition.endswith("_wind"):
         path = combined_picture(condition[: -len("_wind")])
     else:
