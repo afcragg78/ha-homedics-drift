@@ -26,10 +26,18 @@
 
 """Weather: an emblem for the day's conditions, under the forecast high in big digits.
 
-    sunny   a sun with pointed rays; ripples spread from it across the table
-    cloudy  two clouds floating in drifting wind lines
-    rain    a cloud and raindrops, left smooth in slanting rain
-    snow    a big snowflake and two small ones, in gently drifting lines
+    sunny         a sun with pointed rays; ripples spread from it across the table
+    partlycloudy  that sun with some rays behind a cloud
+    cloudy        two clouds floating in drifting wind lines
+    fog           flat banks of mist, in horizontal wavy bands
+    rain          a cloud and raindrops, left smooth in slanting rain
+    thunderstorm  a cloud, a bold lightning bolt, and a few slanted rain lines
+    snow          a big snowflake and two small ones, in gently drifting lines
+    clear_night   a crescent moon and a few small stars
+    windy         curved gusts in free groups, staggered, each with an open curl
+
+Sun, clouds, rain, snow, and the temperature digits are Josh Lannin's. The other
+five pictures use the same construction.
 
 Shapes and the temperature sit on swept, smooth sand; everything else is textured. Background
 lines flow around each shape instead of through it, which is what outlines the shape. The ball
@@ -45,7 +53,7 @@ The drawing ends inside the panel. `--update` makes a short segment that re-swee
 panel and writes a new number, leaving the rest of the picture alone.
 
 Usage:
-  python3 designs/weather.py sunny 72 [OUT]       full picture (about 15 minutes to draw)
+  python3 designs/weather.py sunny 72 [OUT]       full picture (about 16 minutes to draw)
   python3 designs/weather.py --update 75 [OUT]    temperature only (about 6 minutes)
 Temperatures can be -99..199. OUT ending in .json is an `xy` drawing for driftd's /show;
 otherwise it's HoMedics Drift .txt. --rotate turns the picture to match how the table sits.
@@ -203,6 +211,211 @@ def flake(c, r, tilt=math.pi / 2, twigs=True):
         return pts[:-1] + [polar(c, r, phi)]   # the last arm runs on out to the corner
 
     return Shape(c, radius, snap, detail)
+
+
+def _edge_radius(vertices):
+    """Radius of a polygon that is star-shaped around the origin. `vertices` go around once."""
+    def radius(phi):
+        dx, dy = math.cos(phi), math.sin(phi)
+        best = None
+        for i, (x1, y1) in enumerate(vertices):
+            x2, y2 = vertices[(i + 1) % len(vertices)]
+            ex, ey = x2 - x1, y2 - y1
+            det = dx * ey - dy * ex
+            if abs(det) < 1e-12:
+                continue
+            t = (x1 * ey - y1 * ex) / det
+            s = (x1 * dy - y1 * dx) / det
+            if t > 1e-5 and -1e-4 <= s <= 1 + 1e-4 and (best is None or t < best):
+                best = t
+        return best if best is not None else 0.05
+    return radius
+
+
+def bolt(c, scale=0.50):
+    """A thick lightning bolt, star-shaped from a point in the middle of the zigzag.
+
+    The corners stay in angle order around that point, so the outline is one jagged
+    polygon: wide top, a step to the right, a step to the left, and a long tip.
+    """
+    # Centred on the star point of the unit bolt, then scaled to the table.
+    # Wide enough to read as a bolt, still one polygon around that point.
+    raw = (
+        (-0.02400, 0.44400),
+        (0.34400, 0.44400),
+        (0.12000, 0.13120),
+        (0.47200, 0.05760),
+        (0.15200, -0.18160),
+        (0.28000, -0.52200),
+        (-0.07200, -0.16320),
+        (-0.32800, 0.00240),
+        (-0.04000, 0.18640),
+    )
+    return Shape(c, _edge_radius([(x * scale, y * scale) for x, y in raw]))
+
+
+def crescent(c, scale=0.86, tilt=0.55):
+    """A crescent: the part of one circle outside a second circle that bites into it.
+
+    The shape centre sits in the thick of the crescent, where every direction
+    reaches the edge exactly once. `tilt` turns the horns (0 opens to the right).
+    """
+    outer = (0.22 * scale, 0.0)
+    inner = (0.40 * scale, 0.0)
+    outer_r, inner_r = 0.34 * scale, 0.28 * scale
+    ct, st = math.cos(tilt), math.sin(tilt)
+    outer = (outer[0] * ct - outer[1] * st, outer[0] * st + outer[1] * ct)
+    inner = (inner[0] * ct - inner[1] * st, inner[0] * st + inner[1] * ct)
+
+    def hits(cx, cy, r, phi):
+        dx, dy = math.cos(phi), math.sin(phi)
+        b = cx * dx + cy * dy
+        disc = b * b - (cx * cx + cy * cy - r * r)
+        if disc < 1e-12:
+            return []
+        root = math.sqrt(disc)
+        return [t for t in (b - root, b + root) if t > 1e-5]
+
+    def radius(phi):
+        found = []
+        for t in hits(outer[0], outer[1], outer_r, phi):
+            x, y = t * math.cos(phi), t * math.sin(phi)
+            if math.hypot(x - inner[0], y - inner[1]) >= inner_r - 1e-4:
+                found.append(t)
+        for t in hits(inner[0], inner[1], inner_r, phi):
+            x, y = t * math.cos(phi), t * math.sin(phi)
+            if math.hypot(x - outer[0], y - outer[1]) <= outer_r + 1e-4:
+                found.append(t)
+        return min(found) if found else outer_r
+    return Shape(c, radius)
+
+
+def sun_behind(c, cloud_shape, r_in=0.15, r_out=0.32, rays=12, disc=0.13):
+    """The sun, with any ray that would enter `cloud_shape` cut off at its edge.
+
+    Drawn before the cloud, so the shortened rays read as going behind it. A hair
+    of gap keeps the two shapes from sharing sand; the grooves close that gap.
+    """
+    def raw(phi):
+        u = (phi * rays / (2 * math.pi)) % 1
+        return r_in + (r_out - r_in) * abs(2 * u - 1)
+
+    def radius(phi):
+        base = raw(phi)
+        dx, dy = math.cos(phi), math.sin(phi)
+        # The tip can sit past the cloud while the middle of the ray crosses it.
+        hit = None
+        for i in range(1, 25):
+            t = base * i / 24
+            if cloud_shape.contains((c[0] + dx * t, c[1] + dy * t)):
+                hit = t
+                break
+        if hit is None:
+            return base
+        lo, hi = 0.0, hit
+        for _ in range(16):
+            mid = (lo + hi) / 2
+            if cloud_shape.contains((c[0] + dx * mid, c[1] + dy * mid)):
+                hi = mid
+            else:
+                lo = mid
+        return max(0.05, lo - 0.02)
+
+    def snap(phi):
+        return (math.floor(phi * rays / (2 * math.pi)) + 0.5) * 2 * math.pi / rays
+
+    def detail(phi):
+        n = int(2 * math.pi * disc / STEP)
+        pts = [polar(c, disc, phi + 2 * math.pi * i / n) for i in range(n + 1)]
+        return pts + [polar(c, radius(phi), phi)]
+
+    return Shape(c, radius, snap, detail)
+
+
+def pebble(c, r):
+    """A round hailstone."""
+    return Shape(c, lambda phi: r)
+
+
+def warning_sign(c, r=0.34):
+    """A point-up triangle with an exclamation mark, for a weather alert."""
+    verts = [
+        (r * math.cos(math.radians(a)), r * math.sin(math.radians(a)))
+        for a in (90, 210, 330)
+    ]
+    edge = _edge_radius(verts)
+
+    def detail(phi):
+        bar = line((c[0], c[1] + r * 0.42), (c[0], c[1] + r * 0.02))
+        dot_c = (c[0], c[1] - r * 0.22)
+        dot = [polar(dot_c, r * 0.07, math.radians(i)) for i in range(0, 361, 24)]
+        return bar + dot + [polar(c, edge(phi), phi)]
+
+    return Shape(c, edge, detail=detail)
+
+
+def band(c, w, h, waves=3.0, phase=0.0):
+    """A flat mist bank: a wide, low ellipse with a wavy edge."""
+    def radius(phi):
+        a, b = w / 2, h / 2
+        base = a * b / math.hypot(b * math.cos(phi), a * math.sin(phi))
+        return base * (1 + 0.12 * math.sin(waves * phi + phase))
+    return Shape(c, radius)
+
+
+def _spiral(center, r_outer, r_inner, turns, a0, spin):
+    """Tight spiral from the outside in. `spin` is the sign of the angle change."""
+    arc = abs(turns) * math.pi * (r_outer + r_inner)
+    n = max(8, int(arc / STEP))
+    pts = []
+    for i in range(n + 1):
+        t = i / n
+        radius = r_outer + (r_inner - r_outer) * t
+        ang = a0 + spin * turns * 2 * math.pi * t
+        pts.append(polar(center, radius, ang))
+    return pts
+
+
+def _curl_out(join, hang, radius=0.11, turns=1.85):
+    """From the eye out to `join`, leaving toward +x. The curl sits above or below the line."""
+    if hang == "above":
+        center = (join[0], join[1] + radius)
+        inward = _spiral(center, radius, 0.036, turns, -math.pi / 2, -1)
+    else:
+        center = (join[0], join[1] - radius)
+        inward = _spiral(center, radius, 0.036, turns, math.pi / 2, 1)
+    return inward[::-1]
+
+
+def _curl_in(join, hang, radius=0.11, turns=1.85):
+    """From `join` into the eye, arriving from a line that was heading +x."""
+    if hang == "below":
+        center = (join[0], join[1] - radius)
+        return _spiral(center, radius, 0.036, turns, math.pi / 2, -1)
+    center = (join[0], join[1] + radius)
+    return _spiral(center, radius, 0.036, turns, -math.pi / 2, 1)
+
+
+def _swoosh(x0, x1, y, bow=0.012):
+    n = max(2, int(abs(x1 - x0) / STEP))
+    pts = []
+    for i in range(n + 1):
+        t = i / n
+        x = x0 + (x1 - x0) * t
+        pts.append((x, y + bow * math.sin(math.pi * t)))
+    return pts
+
+
+def _s_curve(x0, x1, y, amp):
+    """An S that starts and ends horizontal, so a curl can sit on either end."""
+    n = max(4, int(abs(x1 - x0) / STEP))
+    pts = []
+    for i in range(n + 1):
+        t = i / n
+        x = x0 + (x1 - x0) * t
+        envelope = math.sin(math.pi * t) ** 2
+        pts.append((x, y + amp * math.sin(2 * math.pi * t) * envelope))
+    return pts
 
 
 # ---------------------------------------------------------------------------------------------
@@ -519,10 +732,489 @@ def scene(name):
                   flake((0.66, -0.22), 0.17, twigs=False)]
         # Snow drifting down: wavy vertical lines, which also cross the moves between the flakes.
         return shapes, [(parallel_rows(90, 0.085, lambda s, k: 0.03 * math.sin(5 * s + 0.7 * k)), Frame())]
-    raise SystemExit(f"unknown condition {name!r}: sunny, cloudy, rain or snow")
+    if name == "thunderstorm":
+        # The bolt hangs just under the cloud. Slanted rows below the cloud's base are the
+        # rain; above it, a quiet sky that flows over the cloud. The two stay apart by a
+        # hair so the background can pass between them.
+        sky = cloud((0.0, -0.20), 0.88, 0.32)
+        strike = bolt((0.04, -0.62), scale=0.56)
+        base = -0.36
+        return [sky, strike], [
+            (parallel_rows(70, 0.095), Frame(hi=base)),
+            (parallel_rows(0, 0.085, lambda s, k: 0.012 * math.sin(2.3 * s + 0.3 * k)),
+             Frame(lo=base)),
+        ]
+    if name == "partlycloudy":
+        # Sun first, cloud second, so the cloud's sweep covers the rays it cuts off.
+        cover = cloud((0.26, -0.30), 0.76, 0.30, lobes=3, phase=0.7)
+        day = sun_behind((-0.22, -0.42), cover)
+        return [day, cover], [(ring_rows(day.c, day.rmax + 0.05, 0.09), Frame())]
+    if name == "clear_night":
+        moon = crescent((-0.02, -0.42), scale=0.90, tilt=0.65)
+        stars = [
+            sun((0.50, -0.24), 0.058, 0.10, rays=4, disc=0.028),
+            sun((-0.48, -0.58), 0.055, 0.090, rays=4, disc=0.026),
+            sun((0.34, -0.70), 0.055, 0.086, rays=4, disc=0.024),
+        ]
+        return [moon, *stars], [
+            (parallel_rows(0, 0.072, lambda s, k: 0.010 * math.sin(2.0 * s + 0.3 * k)), Frame())
+        ]
+    if name == "fog":
+        # Flat wavy banks, stacked, with mist lines flowing around them.
+        banks = [
+            band((0.04, -0.24), 0.90, 0.15, 2.4, 0.3),
+            band((-0.10, -0.46), 0.62, 0.14, 2.8, 1.2),
+            band((0.02, -0.68), 0.98, 0.15, 2.2, 2.1),
+        ]
+
+        def mist(s, k):
+            return 0.026 * math.sin(3.3 * s + 0.55 * k)
+        return banks, [(parallel_rows(0, 0.058, mist), Frame())]
+    if name == "hail":
+        sky = cloud((0, -0.22), 0.82, 0.30)
+        stones = [
+            pebble((-0.36, -0.58), 0.09),
+            pebble((-0.12, -0.70), 0.10),
+            pebble((0.14, -0.60), 0.09),
+            pebble((0.38, -0.74), 0.08),
+        ]
+        return [sky, *stones], [
+            (parallel_rows(68, 0.10), Frame(hi=-0.36)),
+            (parallel_rows(0, 0.09, lambda s, k: 0.01 * math.sin(2.2 * s + 0.3 * k)), Frame(lo=-0.36)),
+        ]
+    if name == "sleet":
+        sky = cloud((0, -0.22), 0.80, 0.30)
+        shapes = [
+            sky,
+            drop((-0.34, -0.62), tip=0.20),
+            flake((-0.08, -0.66), 0.16, twigs=False),
+            drop((0.20, -0.70), tip=0.18),
+            flake((0.42, -0.58), 0.13, twigs=False),
+        ]
+        return shapes, [
+            (parallel_rows(78, 0.09), Frame(hi=-0.36)),
+            (parallel_rows(0, 0.09), Frame(lo=-0.36)),
+        ]
+    if name == "heavy_rain":
+        sky = cloud((0, -0.20), 0.90, 0.30)
+        drops = [
+            drop((x, -0.58 - 0.06 * (i % 2)), tip=0.16)
+            for i, x in enumerate((-0.46, -0.23, 0.0, 0.23, 0.46))
+        ]
+        return [sky, *drops], [
+            (parallel_rows(74, 0.07), Frame(hi=-0.34)),
+            (parallel_rows(0, 0.09), Frame(lo=-0.34)),
+        ]
+    if name == "alert":
+        sign = warning_sign((0, -0.42), 0.38)
+        return [sign], [
+            (parallel_rows(0, 0.10, lambda s, k: 0.01 * math.sin(1.6 * s + k)), Frame())
+        ]
+    raise SystemExit(
+        f"unknown condition {name!r}: sunny, partlycloudy, cloudy, fog, rain, "
+        "thunderstorm, snow, clear_night or windy"
+    )
+
+
+def _resample(pts):
+    sampled = [pts[0]]
+    for point in pts[1:]:
+        if math.dist(sampled[-1], point) > 1e-9:
+            sampled += line(sampled[-1], point)[1:]
+    return sampled
+
+
+def _retrace(pts):
+    """Out and back on the same groove: one stroke, drawn twice."""
+    pts = _resample(pts)
+    return pts + pts[::-1][1:]
+
+
+def _bow(x0, x1, y, bow):
+    """A horizontal stroke bowed up in the middle."""
+    n = max(3, int(abs(x1 - x0) / STEP))
+    pts = []
+    for i in range(n + 1):
+        t = i / n
+        pts.append((x0 + (x1 - x0) * t, y + bow * math.sin(math.pi * t)))
+    return pts
+
+
+def _open_curl(tip, radius, turns=1.45, up=True):
+    """Open spiral on a rightward tip. About one and a half turns."""
+    inner = max(0.018, radius * 0.26)
+    if up:
+        center = (tip[0], tip[1] + radius)
+        angle, spin = -math.pi / 2, 1.0
+    else:
+        center = (tip[0], tip[1] - radius)
+        angle, spin = math.pi / 2, -1.0
+    arc = abs(turns) * math.pi * (radius + inner)
+    n = max(12, int(arc / STEP))
+    pts = []
+    for i in range(n + 1):
+        t = i / n
+        pts.append(polar(
+            center,
+            radius + (inner - radius) * t,
+            angle + spin * turns * 2 * math.pi * t,
+        ))
+    return pts
+
+
+def _swoosh(x0, x1, y, bow, curl=0.0, up=True):
+    body = _bow(x0, x1, y, bow)
+    if curl <= 0:
+        return body
+    return body + _open_curl(body[-1], curl, 1.45, up)[1:]
+
+
+def _on_rim(y, side):
+    """Point on the table edge at height y. side is -1 (left) or +1 (right)."""
+    y = max(-RIM + 0.02, min(RIM - 0.02, y))
+    return (side * math.sqrt(RIM * RIM - y * y), y)
+
+
+def _from_edge(path, pts):
+    """Draw a stroke that begins on the rim, then come back along it.
+
+    The move from the previous stroke stays on the rim, so nothing vertical or
+    diagonal is added inside the picture.
+    """
+    stroke = _retrace(pts)
+    if path:
+        path += rim_arc(path[-1], stroke[0])
+    path += stroke
+    return path
+
+
+def _gust(side, y, x_end, bow, curl=0.0, curl_up=True, kind="bow"):
+    """One wind line. side -1 starts on the left rim; side +1 starts on the right.
+
+    The free end is x_end, so lines that leave the right rim have their left
+    tip in the middle of the table. A curl, when there is one, sits on that tip.
+    """
+    start = _on_rim(y, side)
+    if kind == "s":
+        body = _s_curve(start[0], x_end, y, bow)
+    else:
+        body = _bow(start[0], x_end, y, bow)
+    if curl <= 0:
+        return body
+    tip = body[-1]
+    hooked = _open_curl(tip, curl, 1.4, up=curl_up)
+    if side > 0:
+        hooked = [(2 * tip[0] - p[0], p[1]) for p in hooked]
+    return body + hooked[1:]
+
+
+def wind_gusts():
+    """Free gust groups. Each line starts on the rim at its own height, so the left ends stagger.
+
+    The pen returns along the stroke and only then walks the table edge to the
+    next line. Long lines run into an open curl. Nothing joins the lines inside
+    the picture.
+    """
+    path = []
+    # side, y, x_end, bow, curl, curl_up, kind.
+    # Groups sit apart. Within a group the left tips are not on one vertical line.
+    rows = (
+        (-1, -0.13, 0.48, 0.08, 0.036, True, "s"),
+        (1, -0.27, 0.12, 0.075, 0.0, True, "s"),
+        (-1, -0.40, -0.06, 0.07, 0.0, True, "s"),
+        (1, -0.53, 0.22, 0.08, 0.034, False, "s"),
+        (-1, -0.66, 0.44, 0.075, 0.036, True, "s"),
+        (1, -0.78, 0.02, 0.065, 0.0, True, "s"),
+        (-1, -0.88, 0.16, 0.06, 0.0, True, "s"),
+    )
+    for side, y, x_end, bow, curl, curl_up, kind in rows:
+        _from_edge(path, _gust(side, y, x_end, bow, curl, curl_up, kind))
+    return path
+
+
+def _side_gusts(avoid=None):
+    """Gusts that begin on the right rim, beside a symbol. `avoid` is a height to skip."""
+    path = []
+    rows = (
+        (-0.14, 0.18, 0.075, 0.0, True, "s"),
+        (-0.26, 0.36, 0.07, 0.034, True, "s"),
+        (-0.38, 0.08, 0.075, 0.0, True, "s"),
+        (-0.50, 0.30, 0.07, 0.0, True, "s"),
+        (-0.62, 0.04, 0.07, 0.032, False, "s"),
+        (-0.74, 0.24, 0.065, 0.0, True, "s"),
+        (-0.84, 0.10, 0.06, 0.0, True, "s"),
+    )
+    for y, x_end, bow, curl, curl_up, kind in rows:
+        if avoid is not None and abs(y - avoid) < 0.09:
+            continue
+        _from_edge(path, _gust(1, y, x_end, bow, curl, curl_up, kind))
+    return path
+
+
+
+def _draw_shapes(shapes, leave=None):
+    """Sweep and outline shapes, with no full-table background. Links end inside the next shape."""
+    path = []
+    for index, shape in enumerate(shapes):
+        if index + 1 < len(shapes):
+            nxt = shapes[index + 1].c
+        elif leave is not None:
+            nxt = leave
+        else:
+            nxt = (shape.c[0] + 0.3, shape.c[1])
+        if path:
+            path += line(path[-1], shape.c)[1:]
+        path += shape.draw(nxt)
+    return path
+
+
+def _park(y, reach):
+    """Center whose left edge, `reach` out, sits on the table rim."""
+    room = max(1e-4, RIM * RIM - y * y)
+    return -math.sqrt(room) + reach
+
+
+def _emblem(name):
+    """The day's symbol on the left. The path ends on the left rim, so gusts join along the edge."""
+    if name == "hot":
+        bulb_r, bulb_y = 0.15, -0.56
+        return _thermometer(
+            _park(bulb_y, bulb_r), bulb_y, bulb_r, column_top=-0.16, heat=True, finish="left"
+        )
+    if name == "cold":
+        bulb_r, bulb_y = 0.14, -0.58
+        return _thermometer(
+            _park(bulb_y, bulb_r), bulb_y, bulb_r, column_top=-0.46, spark=0.09, finish="left"
+        )
+    if name == "alert":
+        radius = 0.28
+        ang = math.radians(210)  # the left corner
+        cy = -0.50
+        vy = radius * math.sin(ang)
+        cx = _park(cy + vy, 0) - radius * math.cos(ang)
+        sign = warning_sign((cx, cy), radius)
+        drawn = sign.draw(polar((cx, cy), 1, ang))
+        return drawn + drawn[::-1][1:] + drawn[1:]
+
+    if name == "rain":
+        cy, reach, w, h = -0.30, 0.26, 0.52, 0.20
+        cx = _park(cy, reach)
+        sky = cloud((cx, cy), w, h)
+        shapes = [
+            drop((cx + 0.00, cy - 0.14), tip=0.16),
+            drop((cx + 0.14, cy - 0.18), tip=0.16),
+            drop((cx + 0.26, cy - 0.12), tip=0.14),
+            sky,
+        ]
+    elif name == "heavy_rain":
+        cy, reach = -0.28, 0.28
+        cx = _park(cy, reach)
+        sky = cloud((cx, cy), 0.56, 0.20)
+        shapes = [
+            drop((cx + dx, cy - 0.22 - 0.04 * (i % 2)), tip=0.14)
+            for i, dx in enumerate((0.00, 0.14, 0.28, 0.40))
+        ] + [sky]
+    elif name == "thunderstorm":
+        cy, reach = -0.26, 0.28
+        cx = _park(cy, reach)
+        shapes = [bolt((cx + 0.01, cy - 0.05), scale=0.34), cloud((cx, cy), 0.56, 0.20)]
+    elif name == "hail":
+        cy, reach = -0.28, 0.25
+        cx = _park(cy, reach)
+        shapes = [
+            pebble((cx + 0.02, cy - 0.20), 0.07),
+            pebble((cx + 0.16, cy - 0.28), 0.08),
+            pebble((cx + 0.30, cy - 0.18), 0.07),
+            cloud((cx, cy), 0.50, 0.18),
+        ]
+    elif name == "sleet":
+        cy, reach = -0.28, 0.25
+        cx = _park(cy, reach)
+        shapes = [
+            drop((cx + 0.02, cy - 0.22), tip=0.14),
+            flake((cx + 0.16, cy - 0.28), 0.11, twigs=False),
+            drop((cx + 0.30, cy - 0.20), tip=0.13),
+            cloud((cx, cy), 0.50, 0.18),
+        ]
+    elif name == "snow":
+        cy, reach = -0.42, 0.32
+        cx = _park(cy, reach)
+        shapes = [
+            flake((cx + 0.22, cy + 0.20), 0.10, twigs=False),
+            flake((cx, cy), 0.28),
+        ]
+    elif name == "fog":
+        cy, reach = -0.36, 0.32
+        cx = _park(cy, reach)
+        shapes = [
+            band((cx + 0.06, cy + 0.18), 0.50, 0.13, 2.2, 0.4),
+            band((cx, cy), 0.56, 0.14, 2.4, 1.1),
+        ]
+    else:
+        cy, reach = -0.36, 0.24
+        cx = _park(cy, reach)
+        shapes = [cloud((cx, cy), 0.48, 0.18)]
+    return _draw_shapes(shapes, leave=(shapes[-1].c[0] - 1.5, shapes[-1].c[1]))
+
+
+def combined_picture(base):
+    """Symbol on the left, gusts on the right, joined only along the table edge."""
+    symbol = _emblem(base)
+    gusts = _side_gusts()
+    if not symbol:
+        return gusts
+    end = symbol[-1]
+    radius = math.hypot(*end) or 1.0
+    if abs(radius - RIM) > 0.004:
+        rim = (end[0] / radius * RIM, end[1] / radius * RIM)
+        symbol = symbol + line(end, rim)[1:]
+        end = rim
+    return symbol + rim_arc(end, gusts[0]) + gusts
+
+
+def _quarter(center, radius, a0, a1):
+    delta = a1 - a0
+    n = max(3, int(abs(delta) * radius / STEP))
+    return [polar(center, radius, a0 + delta * i / n) for i in range(n + 1)]
+
+
+def _arc(center, radius, a0, delta):
+    n = max(2, int(abs(delta) * max(radius, 0.02) / STEP))
+    return [polar(center, radius, a0 + delta * i / n) for i in range(n + 1)]
+
+
+def _rising_wave(x, y0, height, amp):
+    """One short heat line: a single gentle wave, back on the glass at the top."""
+    n = max(8, int(height / STEP))
+    pts = []
+    for i in range(n + 1):
+        t = i / n
+        pts.append((x + amp * math.sin(2 * math.pi * t), y0 + height * t))
+    return pts
+
+
+def _wall_waves(path, x, y_from, y_to, bases, height, amp):
+    """Walk the glass wall, drawing each heat line and coming back along it."""
+    direction = 1 if y_to >= y_from else -1
+    ordered = sorted(bases, reverse=direction < 0)
+    for base in ordered:
+        if (base - y_from) * direction < -1e-6 or (base - y_to) * direction > 1e-6:
+            continue
+        path += line(path[-1], (x, base))[1:]
+        wave = _rising_wave(x, base, height, amp)
+        path += wave[1:] + wave[::-1][1:]
+    path += line(path[-1], (x, y_to))[1:]
+    return path
+
+
+def _thermometer(cx, bulb_y, bulb_r, column_top, *, heat=False, spark=0.0, finish="rim"):
+    """One thermometer: round bulb, rounded tube, mercury column.
+
+    Heat adds three short rising waves on each side. A snowflake, when asked
+    for, sits against the bulb. `finish` "rim" ends on the bottom edge of the
+    table; "right" ends on the right of the symbol so a gust can leave it.
+    """
+    half = max(0.042, bulb_r * 0.28)
+    neck = bulb_y + bulb_r
+    # A tall glass leaves room for three short heat lines that do not touch.
+    rise = 0.50 if bulb_r >= 0.2 else 0.36
+    top = min(-0.02, neck + rise)
+    wall_lo = neck + half
+    if top < wall_lo + 0.08:
+        top = wall_lo + 0.08
+    center = (cx, bulb_y)
+    column_top = max(wall_lo + 0.02, min(top - 0.04, column_top))
+
+    # Sweep the bulb twice. The second pass is the same groove, and it ends
+    # on the top of the glass so the mercury can start there.
+    drawn = pebble(center, bulb_r).draw((cx, neck + 1))
+    path = drawn + drawn[::-1][1:] + drawn[1:]
+    path += _retrace([(cx, neck), (cx, column_top)])[1:]
+
+    # Glass, drawn twice on the same groove. Waves are added on the second pass.
+    path += _quarter((cx - half, neck), half, 0, math.pi / 2)[1:]
+    path += line(path[-1], (cx - half, top))[1:]
+    cap = [polar((cx, top), half, math.pi - math.pi * i / 16) for i in range(17)]
+    path += cap[1:]
+    path += line(path[-1], (cx + half, wall_lo))[1:]
+    path += _quarter((cx + half, neck), half, math.pi / 2, math.pi)[1:]
+
+    # Back up the right side, across the cap, and down the left side.
+    path += _quarter((cx + half, neck), half, math.pi, math.pi / 2)[1:]
+    if heat:
+        span = top - wall_lo
+        height = min(0.10, max(0.065, span / 5.2))
+        gap = (span - 3 * height) / 4
+        bases = [wall_lo + gap + i * (height + gap) for i in range(3)]
+        amp = 0.028
+        path = _wall_waves(path, cx + half, wall_lo, top, bases, height, amp)
+        path += cap[::-1][1:]
+        path = _wall_waves(path, cx - half, top, wall_lo, bases, height, -amp)
+    else:
+        path += line(path[-1], (cx + half, top))[1:]
+        path += cap[::-1][1:]
+        path += line(path[-1], (cx - half, wall_lo))[1:]
+    path += _quarter((cx - half, neck), half, math.pi / 2, 0)[1:]
+
+    if spark > 0:
+        arm = 0.9 * spark
+        # Upper-right of the bulb, close enough that the arm tip meets the glass.
+        theta = 0.55
+        flake_c = polar(center, bulb_r + arm, theta)
+        path += _arc(center, bulb_r, math.pi / 2, theta - math.pi / 2)[1:]
+        path += line(path[-1], flake_c)[1:]
+        path += flake(flake_c, spark, tilt=theta + math.pi, twigs=False).draw(
+            (flake_c[0] + spark, flake_c[1]) if finish == "right" else center
+        )
+        if finish == "rim":
+            # Back on the bulb, then around the left of the glass to the table edge.
+            path += line(path[-1], polar(center, bulb_r, theta))[1:]
+            path += _arc(center, bulb_r, theta, math.pi / 2 - theta)[1:]
+            path += _arc(center, bulb_r, math.pi / 2, math.pi)[1:]
+        elif finish == "left":
+            path += line(path[-1], polar(center, bulb_r, theta))[1:]
+            path += _arc(center, bulb_r, theta, math.pi - theta)[1:]
+    elif finish == "rim":
+        path += _arc(center, bulb_r, math.pi / 2, math.pi)[1:]
+    elif finish == "left":
+        path += _arc(center, bulb_r, math.pi / 2, math.pi / 2)[1:]
+
+    if finish == "right" and spark <= 0:
+        # Stop on the right shoulder. The return fillet above already ended at the neck;
+        # step back out to the right wall so the leaving gust does not cross the tube.
+        path += _quarter((cx + half, neck), half, math.pi, math.pi / 2)[1:]
+    return path
+
+
+def hot_picture():
+    """A centered thermometer, column near the top, three heat lines on each side."""
+    # The bulb sits on the bottom rim so the path can leave along the table edge.
+    bulb_r = 0.24
+    return _thermometer(0.0, -RIM + bulb_r, bulb_r, column_top=-0.08, heat=True, finish="rim")
+
+
+def cold_picture():
+    """The same glass with the column low, and one small flake beside the bulb."""
+    bulb_r = 0.24
+    return _thermometer(
+        0.0, -RIM + bulb_r, bulb_r, column_top=-0.22, spark=0.11, finish="rim"
+    )
 
 
 def build(condition, value):
+    if condition == "windy":
+        path = wind_gusts()
+    elif condition == "hot":
+        path = hot_picture()
+    elif condition == "cold":
+        path = cold_picture()
+    elif isinstance(condition, str) and condition.endswith("_wind"):
+        path = combined_picture(condition[: -len("_wind")])
+    else:
+        path = None
+    if path is not None:
+        text, cap = panel(value)
+        return path + rim_arc(path[-1], text[0]) + text, cap
     shapes, passes = scene(condition)
     rows = passes[0][0]
     path = []

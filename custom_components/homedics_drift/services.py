@@ -10,6 +10,7 @@ import voluptuous as vol
 
 from .const import DOMAIN
 from .coordinator import DriftCoordinator
+from .weather import DRAWINGS
 
 SERVICE_UPLOAD = "upload_pattern"
 SERVICE_DELETE = "delete_pattern"
@@ -65,7 +66,7 @@ _FAVORITE_SCHEMA = vol.Schema(
 )
 _WEATHER_SCHEMA = vol.Schema(
     {
-        vol.Optional("condition"): vol.In(["sunny", "cloudy", "rain", "snow"]),
+        vol.Optional("condition"): vol.In(DRAWINGS),
         vol.Optional("temperature"): vol.All(vol.Coerce(int), vol.Range(min=-99, max=199)),
         vol.Optional("play", default=True): cv.boolean,
     },

@@ -149,7 +149,7 @@
     "step": {
       "init": {
         "title": "Drawing options",
-        "description": "AI drawings use an AI Task if you have one. Leave it empty to use Home Assistant's preferred AI Task, or the first one that is online. Weather drawings use any weather entity. Photo feedback compares a camera snapshot with the sand twin after a photo drawing, and it stays off until you pick a camera. Auto Weather starts on only the first time that switch is added. No API key is stored here.",
+        "description": "AI drawings use an AI Task if you have one. Leave it empty to use Home Assistant's preferred AI Task, or the first one that is online. Weather drawings use any weather entity. Windy threshold is mph when the temperature unit is °F (default 15) and km/h when it is °C (default 25). Hot and cold use the same temperature unit, default 90°F / 32°C and 32°F / 0°C. Heavy rain is a percent chance, default 70. Weather alert is optional: leave it empty and alerts stay off. Photo feedback compares a camera snapshot with the sand twin after a photo drawing, and it stays off until you pick a camera. Auto Weather starts on only the first time that switch is added. No API key is stored here.",
         "data": {
           "ai_task_entity": "AI Task entity",
           "conversation_agent": "Conversation agent",
@@ -159,7 +159,12 @@
           "weather_unit": "Temperature unit",
           "weather_rotation": "Rotation",
           "weather_after_pattern": "Auto Weather starts on",
-          "weather_cooldown_min": "Weather cooldown"
+          "weather_cooldown_min": "Weather cooldown",
+          "weather_wind_threshold": "Windy threshold",
+          "weather_hot_threshold": "Hot threshold",
+          "weather_cold_threshold": "Cold threshold",
+          "weather_heavy_probability": "Heavy rain chance",
+          "weather_alert_entity": "Weather alert"
         }
       }
     }
@@ -341,7 +346,7 @@
         },
         "condition": {
           "name": "Condition",
-          "description": "sunny, cloudy, rain, or snow. Leave empty to use the daily forecast."
+          "description": "A picture name, such as windy or rain_wind. Leave empty to use the daily forecast. Allowed: sunny, partlycloudy, cloudy, hot, cold, clear_night, fog, rain, heavy_rain, thunderstorm, hail, sleet, snow, windy, alert, rain_wind, heavy_rain_wind, thunderstorm_wind, hail_wind, sleet_wind, snow_wind, fog_wind, hot_wind, cold_wind, alert_wind."
         },
         "temperature": {
           "name": "Temperature",
