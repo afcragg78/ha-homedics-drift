@@ -131,6 +131,44 @@ def test_rotation_is_counter_clockwise_and_zero_matches_the_txt_writer() -> None
     assert wire_point(*polar)[0] * 6 == writer
 
 
+def test_card_preview_turns_with_the_table_rotation() -> None:
+    """Rotation 270 keeps the forecast upright on the table, and on the card."""
+    from PIL import Image
+    import io
+
+    from custom_components.homedics_drift.preview import render_thr
+
+    def ink_offset(png: bytes) -> tuple[float, float]:
+        image = Image.open(io.BytesIO(png)).convert("L")
+        width, height = image.size
+        pixels = image.load()
+        center = (width - 1) / 2
+        radius = center - max(6, width // 16)
+        total = sx = sy = 0.0
+        for y in range(height):
+            for x in range(width):
+                if math.hypot(x - center, y - center) > radius * 0.92:
+                    continue
+                if pixels[x, y] < 90:
+                    total += 1
+                    sx += x
+                    sy += y
+        assert total > 5
+        return sx / total - center, sy / total - center
+
+    mark = [(0.0, 0.62), (0.05, 0.60), (0.0, 0.58)]
+    upright_x, upright_y = ink_offset(render_thr(xy_to_thr(mark), size=240))
+    raw_x, raw_y = ink_offset(render_thr(xy_to_thr(rotate_xy(mark, 270)), size=240))
+    card_x, card_y = ink_offset(
+        render_thr(xy_to_thr(rotate_xy(mark, 270)), size=240, view_rotation=270)
+    )
+    # Image y grows downward, so the top of the card is a negative offset.
+    assert upright_y < -20
+    assert raw_x > 20
+    assert card_y < -20
+    assert abs(card_x) < 30
+
+
 def test_theta_is_unwrapped_across_the_negative_x_axis() -> None:
     """A short arc past the branch cut must not become a full orbit."""
     points = [

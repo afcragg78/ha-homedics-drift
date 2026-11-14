@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.2
+
+- Wind is four long wavy lines under the temperature, evenly spaced, each ending in a large round curl. The upper curls roll up and the bottom curl rolls down. A combined picture keeps the symbol on the left and puts three curled gusts on the right. The curls are about one and a half times the earlier size, and on a sunny gust picture the ball leaves along a ray instead of cutting across the sun.
+- The pattern preview on the card is turned by the same weather rotation that is sent to the table, so the card matches the sand.
+
 ## 1.4.1
 
 - More weather symbols: thunderstorm, partly cloudy, clear night, fog, wind, hot, cold, hail, sleet, heavy rain, and a weather alert. Wind at or above the threshold is the whole picture on a fair sky, and a run of gusts beside rain, snow, a storm, hail, sleet, fog, hot, cold, or an alert. Defaults are 15 mph / 25 km/h, 90°F / 32°C, 32°F / 0°C, and a 70% chance of heavy rain. An optional alert entity, left empty, stays off.
