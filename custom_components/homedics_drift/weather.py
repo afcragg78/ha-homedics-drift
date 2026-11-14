@@ -25,15 +25,37 @@ PICTURES = (
     "sunny",
     "partlycloudy",
     "cloudy",
+    "hot",
+    "cold",
+    "clear_night",
     "fog",
     "rain",
+    "heavy_rain",
     "thunderstorm",
+    "hail",
+    "sleet",
     "snow",
-    "clear_night",
     "windy",
+    "alert",
 )
 
+# Forecast pictures that also carry a gust when the wind is over the threshold.
+_WIND_COMBOS = (
+    "rain_wind",
+    "heavy_rain_wind",
+    "thunderstorm_wind",
+    "hail_wind",
+    "sleet_wind",
+    "snow_wind",
+    "fog_wind",
+    "hot_wind",
+    "cold_wind",
+    "alert_wind",
+)
+DRAWINGS = PICTURES + _WIND_COMBOS
+
 # Home Assistant weather conditions, and the picture each one draws.
+# Wind combinations and the hot/cold/alert choices are applied separately.
 _CONDITION_MAP = {
     "sunny": "sunny",
     "clear-night": "clear_night",
@@ -44,15 +66,30 @@ _CONDITION_MAP = {
     "windy-variant": "windy",
     "exceptional": "cloudy",
     "rainy": "rain",
-    "pouring": "rain",
+    "pouring": "heavy_rain",
+    "heavy-rain": "heavy_rain",
     "lightning": "thunderstorm",
     "lightning-rainy": "thunderstorm",
-    "hail": "rain",
+    "hail": "hail",
     "rain": "rain",
     "thunderstorm": "thunderstorm",
     "snowy": "snow",
-    "snowy-rainy": "snow",
+    "snowy-rainy": "sleet",
+    "sleet": "sleet",
     "snow": "snow",
+    "hot": "hot",
+    "cold": "cold",
+    "alert": "alert",
+    "rain-wind": "rain_wind",
+    "heavy-rain-wind": "heavy_rain_wind",
+    "thunderstorm-wind": "thunderstorm_wind",
+    "hail-wind": "hail_wind",
+    "sleet-wind": "sleet_wind",
+    "snow-wind": "snow_wind",
+    "fog-wind": "fog_wind",
+    "hot-wind": "hot_wind",
+    "cold-wind": "cold_wind",
+    "alert-wind": "alert_wind",
 }
 
 
@@ -112,8 +149,8 @@ def convert_temperature(value: float, source_unit: object, preference: object) -
     return rounded
 
 
-def forecast_high(response: object, entity_id: str) -> tuple[str, float]:
-    """Condition and high from ``weather.get_forecasts`` ``type: daily``."""
+def _first_forecast(response: object, entity_id: str) -> dict[str, object]:
+    """The first day of a ``weather.get_forecasts`` ``type: daily`` response."""
     if not isinstance(response, dict):
         raise WeatherDesignError("The weather entity did not return a daily forecast")
     block = response.get(entity_id)
@@ -124,6 +161,14 @@ def forecast_high(response: object, entity_id: str) -> tuple[str, float]:
     if not isinstance(forecast, list) or not forecast or not isinstance(forecast[0], dict):
         raise WeatherDesignError("The weather entity did not return a daily forecast")
     first = forecast[0]
+    if not isinstance(first, dict):
+        raise WeatherDesignError("The weather entity did not return a daily forecast")
+    return first
+
+
+def forecast_high(response: object, entity_id: str) -> tuple[str, float]:
+    """Condition and high from ``weather.get_forecasts`` ``type: daily``."""
+    first = _first_forecast(response, entity_id)
     condition = first.get("condition")
     temperature = first.get("temperature")
     if not isinstance(condition, str) or not condition.strip():
@@ -131,6 +176,287 @@ def forecast_high(response: object, entity_id: str) -> tuple[str, float]:
     if isinstance(temperature, bool) or not isinstance(temperature, (int, float)):
         raise WeatherDesignError("The forecast did not include a high temperature")
     return condition, float(temperature)
+
+
+def forecast_wind_speed(response: object, entity_id: str) -> float | None:
+    """Wind speed on the first forecast day, or None when that day omits it."""
+    try:
+        first = _first_forecast(response, entity_id)
+    except WeatherDesignError:
+        return None
+    speed = first.get("wind_speed")
+    if isinstance(speed, bool) or not isinstance(speed, (int, float)):
+        return None
+    return float(speed)
+
+
+# Multiply by these to get m/s. They are Home Assistant's SpeedConverter ratios.
+_METERS_PER_SECOND: dict[str, float] = {
+    "m/s": 1.0,
+    "km/h": 1.0 / 3.6,
+    "mph": 1.0 / 2.2369362920544025,
+    "kn": 1.852 / 3.6,
+    "ft/s": 1.0 / 3.280839895013123,
+}
+_SPEED_ALIASES = {
+    "m/s": "m/s",
+    "mps": "m/s",
+    "km/h": "km/h",
+    "kmh": "km/h",
+    "kph": "km/h",
+    "mph": "mph",
+    "mi/h": "mph",
+    "mp/h": "mph",
+    "kn": "kn",
+    "kt": "kn",
+    "knot": "kn",
+    "knots": "kn",
+    "ft/s": "ft/s",
+    "fps": "ft/s",
+}
+
+def canonical_speed_unit(unit: object) -> str | None:
+    """``mph``, ``km/h``, ``m/s``, ``kn``, or ``ft/s``."""
+    if not isinstance(unit, str):
+        return None
+    return _SPEED_ALIASES.get(unit.strip().lower().replace(" ", ""))
+
+
+def convert_wind_speed(value: float, source_unit: object, target_unit: str) -> float:
+    """Convert a wind speed with Home Assistant's speed converter.
+
+    ``SpeedConverter`` is used when Home Assistant is installed. The same
+    ratios are used otherwise, so a test and a running instance agree.
+    """
+    source = canonical_speed_unit(source_unit)
+    target = canonical_speed_unit(target_unit)
+    if source is None or target is None:
+        raise WeatherDesignError("The wind speed unit is not one this table can convert")
+    if source == target:
+        return float(value)
+    try:
+        from homeassistant.util.unit_conversion import SpeedConverter
+    except ImportError:
+        SpeedConverter = None  # type: ignore[assignment]
+    if SpeedConverter is not None:
+        return float(SpeedConverter.convert(float(value), source, target))
+    meters = float(value) * _METERS_PER_SECOND[source]
+    return meters / _METERS_PER_SECOND[target]
+
+
+def wind_threshold_unit(temperature_preference: object, entity_temperature_unit: object) -> str:
+    """``mph`` next to °F, ``km/h`` next to °C. Auto follows the weather entity."""
+    asked = (
+        temperature_preference.strip().upper()
+        if isinstance(temperature_preference, str)
+        else "AUTO"
+    )
+    if asked == "C":
+        return "km/h"
+    if asked == "F":
+        return "mph"
+    if _unit_code(entity_temperature_unit) == "C":
+        return "km/h"
+    return "mph"
+
+
+def default_wind_threshold(unit: str) -> float:
+    """Beaufort 4, a moderate breeze: 15 mph or 25 km/h."""
+    return 25.0 if unit == "km/h" else 15.0
+
+
+def wind_threshold_value(saved: object, unit: str) -> float:
+    """The saved threshold, or the Beaufort 4 default when it has never been set."""
+    if isinstance(saved, bool) or saved is None:
+        return default_wind_threshold(unit)
+    try:
+        number = float(saved)
+    except (TypeError, ValueError):
+        return default_wind_threshold(unit)
+    if number < 0:
+        return 0.0
+    if number > 200:
+        return 200.0
+    return number
+
+
+def _condition_key(condition: str) -> str:
+    key = condition.strip().lower().replace("_", "-")
+    if key == "partly-cloudy":
+        return "partlycloudy"
+    return key
+
+
+def forecast_low(response: object, entity_id: str) -> float | None:
+    """Overnight low on the first forecast day, or None when it is missing."""
+    try:
+        first = _first_forecast(response, entity_id)
+    except WeatherDesignError:
+        return None
+    low = first.get("templow")
+    if isinstance(low, bool) or not isinstance(low, (int, float)):
+        return None
+    return float(low)
+
+
+def forecast_probability(response: object, entity_id: str) -> float | None:
+    """Precipitation probability, 0–100, or None when the forecast omits it."""
+    try:
+        first = _first_forecast(response, entity_id)
+    except WeatherDesignError:
+        return None
+    chance = first.get("precipitation_probability")
+    if isinstance(chance, bool) or not isinstance(chance, (int, float)):
+        return None
+    return float(chance)
+
+
+def temperature_threshold_unit(temperature_preference: object, entity_temperature_unit: object) -> str:
+    """``F`` or ``C``. Auto follows the weather entity, and an unknown unit is °F."""
+    asked = (
+        temperature_preference.strip().upper()
+        if isinstance(temperature_preference, str)
+        else "AUTO"
+    )
+    if asked == "C":
+        return "C"
+    if asked == "F":
+        return "F"
+    if _unit_code(entity_temperature_unit) == "C":
+        return "C"
+    return "F"
+
+
+def default_hot_threshold(unit: str) -> float:
+    """90°F or 32°C."""
+    return 32.0 if unit == "C" else 90.0
+
+
+def default_cold_threshold(unit: str) -> float:
+    """32°F or 0°C."""
+    return 0.0 if unit == "C" else 32.0
+
+
+def default_heavy_probability() -> float:
+    return 70.0
+
+
+def _saved_number(saved: object, fallback: float, low: float, high: float) -> float:
+    if isinstance(saved, bool) or saved is None:
+        return fallback
+    try:
+        number = float(saved)
+    except (TypeError, ValueError):
+        return fallback
+    return max(low, min(high, number))
+
+
+def hot_threshold_value(saved: object, unit: str) -> float:
+    return _saved_number(saved, default_hot_threshold(unit), -40, 140)
+
+
+def cold_threshold_value(saved: object, unit: str) -> float:
+    return _saved_number(saved, default_cold_threshold(unit), -80, 80)
+
+
+def heavy_probability_value(saved: object) -> float:
+    return _saved_number(saved, default_heavy_probability(), 0, 100)
+
+
+def alert_active(state: object) -> bool:
+    """A binary sensor that is on, or a sensor whose number is above zero."""
+    if not isinstance(state, str):
+        return False
+    text = state.strip().lower()
+    if text in {"on", "true", "yes"}:
+        return True
+    if text in {"off", "false", "no", "unknown", "unavailable", "none", ""}:
+        return False
+    try:
+        return float(text) > 0
+    except ValueError:
+        return False
+
+
+_FULL_WIND = frozenset({"sunny", "partlycloudy", "cloudy", "clear_night", "windy"})
+_PRECIPITATION = frozenset(
+    {
+        "lightning",
+        "lightning-rainy",
+        "thunderstorm",
+        "hail",
+        "snowy-rainy",
+        "sleet",
+        "snowy",
+        "snow",
+        "pouring",
+        "heavy-rain",
+        "rainy",
+        "rain",
+    }
+)
+
+
+def choose_picture(
+    *,
+    condition: str,
+    wind_speed: float | None,
+    wind_threshold: float,
+    temperature_high: float | None,
+    temperature_low: float | None,
+    hot_threshold: float,
+    cold_threshold: float,
+    precipitation_probability: float | None,
+    heavy_threshold: float,
+    alert: bool,
+) -> str:
+    """Which picture to draw for one forecast day.
+
+    Order, before the wind is added: alert, storm, hail, sleet, snow, heavy
+    rain, rain, fog, hot or cold, then the fair-weather sky. Wind at or above
+    the threshold replaces a fair sky with the full gust picture. On every
+    other symbol it is drawn beside that symbol, so the wind stays visible.
+    """
+    key = _condition_key(condition)
+    if alert:
+        base = "alert"
+    elif key in {"lightning", "lightning-rainy", "thunderstorm"}:
+        base = "thunderstorm"
+    elif key == "hail":
+        base = "hail"
+    elif key in {"snowy-rainy", "sleet"}:
+        base = "sleet"
+    elif key in {"snowy", "snow"}:
+        base = "snow"
+    elif key in {"pouring", "heavy-rain"} or (
+        precipitation_probability is not None
+        and float(precipitation_probability) >= float(heavy_threshold)
+    ):
+        base = "heavy_rain"
+    elif key in {"rainy", "rain"}:
+        base = "rain"
+    elif key == "fog":
+        base = "fog"
+    elif (
+        key not in _PRECIPITATION
+        and key != "fog"
+        and temperature_high is not None
+        and float(temperature_high) >= float(hot_threshold)
+    ):
+        base = "hot"
+    elif (
+        key in {"sunny", "clear-night", "partlycloudy", "cloudy"}
+        and temperature_low is not None
+        and float(temperature_low) <= float(cold_threshold)
+    ):
+        base = "cold"
+    else:
+        base = map_condition(condition)
+    if wind_speed is None or float(wind_speed) < float(wind_threshold):
+        return base
+    if base in _FULL_WIND:
+        return "windy"
+    return f"{base}_wind"
 
 
 def rotate_xy(points: list[tuple[float, float]], degrees: float) -> list[tuple[float, float]]:
@@ -236,6 +562,9 @@ def weather_options_from(options: dict[str, object] | None) -> dict[str, object]
     entity = data.get("weather_entity", "")
     if not isinstance(entity, str):
         entity = ""
+    alert = data.get("weather_alert_entity", "")
+    if not isinstance(alert, str):
+        alert = ""
     return {
         "weather_entity": entity.strip(),
         "weather_unit": unit,
@@ -244,6 +573,11 @@ def weather_options_from(options: dict[str, object] | None) -> dict[str, object]
             data.get("weather_after_pattern"), DEFAULT_WEATHER_AFTER_PATTERN
         ),
         "weather_cooldown_min": cooldown_minutes(data.get("weather_cooldown_min")),
+        "weather_wind_threshold": data.get("weather_wind_threshold"),
+        "weather_hot_threshold": data.get("weather_hot_threshold"),
+        "weather_cold_threshold": data.get("weather_cold_threshold"),
+        "weather_heavy_probability": data.get("weather_heavy_probability"),
+        "weather_alert_entity": alert.strip(),
     }
 
 

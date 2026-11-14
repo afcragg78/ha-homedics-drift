@@ -220,24 +220,32 @@ actions:
 
 ## Weather drawing
 
-The picture is one of nine symbols, with the forecast high in big digits. Sun, clouds, rain, snow, and the digits are Josh Lannin's weather design from [Drifted](https://github.com/joshlannin/drifted/blob/main/designs/weather.py) (MIT, Copyright (c) 2026 Altimix LLC), vendored as `custom_components/homedics_drift/weather_design.py`. Thunderstorm, partly cloudy, clear night, fog, and wind are drawn the same way: each shape is swept smooth by a tight spiral, the outline is drawn twice, and the background lines flow around the shapes. The ball never lifts. Previews at 55° are in `docs/weather/`.
+The picture is one of these symbols, with the forecast high in big digits. Sun, clouds, rain, snow, and the digits are Josh Lannin's weather design from [Drifted](https://github.com/joshlannin/drifted/blob/main/designs/weather.py) (MIT, Copyright (c) 2026 Altimix LLC), vendored as `custom_components/homedics_drift/weather_design.py`. The other symbols are drawn the same way: a shape swept by a tight spiral, the outline twice, and one continuous path. Previews at 55°, including rain, storm, and snow with wind, are in `docs/weather/`.
 
 - **sunny** — a sun with pointed rays, and ripples across the table
 - **partlycloudy** — that sun, with some rays behind a cloud
 - **cloudy** — two clouds in drifting lines
+- **hot** — a sun with more rays, when the high reaches the hot threshold
+- **cold** — a frost flake, when the overnight low reaches the cold threshold
+- **clear_night** — a crescent moon and a few small stars
 - **fog** — stacked wavy mist bands
 - **rain** — a cloud and raindrops in slanting rain
+- **heavy_rain** — the same cloud with many drops
 - **thunderstorm** — a cloud, a bold lightning bolt, and a few slanted rain lines
+- **hail** — a cloud and round hailstones
+- **sleet** — drops and flakes together
 - **snow** — a big snowflake and two small ones
-- **clear_night** — a crescent moon and a few small stars
-- **windy** — swirling gust curls
+- **windy** — long gust strokes with tight spiral curls: swooshes, speed lines, and an S
+- **alert** — a warning triangle
 
 1. Open **Settings → Devices & services → HoMedics Drift → Configure**.
-2. **Weather entity**: pick any Home Assistant weather entity. National Weather Service, Met.no, OpenWeatherMap, and any other weather integration all work. The integration calls `weather.get_forecasts` with `type: daily` and uses the first day: its condition, and its high (`temperature`, not the overnight low).
-3. **Temperature unit**: Auto uses that entity's unit (`°F` or `°C`). Choose F or C when you want the digits in the other unit. The high is converted only when the entity's unit and your choice differ.
-4. **Rotation** is 0–359 degrees counter-clockwise. 0 matches the design as published. Turn it if the top of the table is not the far edge.
-5. **Auto Weather starts on** is only the first value of the **Auto Weather** switch. The switch starts off unless this is on before the switch has ever been saved. After that, the switch is the control, and Home Assistant remembers it.
-6. **Weather cooldown** is how long Auto Weather waits before it draws again. The default is 30 minutes.
+2. **Weather entity**: pick any Home Assistant weather entity. National Weather Service, Met.no, OpenWeatherMap, and any other weather integration all work. The integration calls `weather.get_forecasts` with `type: daily` and uses the first day: its condition, its high (`temperature`), its overnight low (`templow`) when that is present, its wind speed, and its chance of precipitation when that field is present.
+3. **Windy threshold**, **Hot threshold**, **Cold threshold**, and **Heavy rain chance** decide the extra symbols. Met.no and many forecasts never report a `windy` condition, so the wind speed is what turns the gusts on. The speed is the day's forecast wind, or the entity's current `wind_speed` when the forecast leaves it out, converted from `wind_speed_unit` (`mph`, `km/h`, `m/s`, `kn`, or `ft/s`). A fair sky (sunny, clear night, partly cloudy, cloudy) at or above the threshold is drawn as the full wind picture. Rain, heavy rain, a storm, hail, sleet, snow, fog, hot, cold, and an alert keep their symbol and gain a smaller run of gusts beside it. The default wind threshold is **15 mph** when the temperature unit is °F, and **25 km/h** when it is °C (Beaufort 4, a moderate breeze). Auto follows the weather entity's temperature unit. Hot defaults to **90°F** or **32°C**, and it is skipped when precipitation is the day's symbol. Cold defaults to **32°F** or **0°C**, and it applies only when the sky would otherwise be clear or cloudy. Heavy rain defaults to a **70%** chance, or the condition `pouring`; a missing chance is not treated as zero. Type each number in the unit shown next to the box.
+4. **Weather alert** is optional. Pick a `binary_sensor` or a `sensor`. On, or a number above zero, draws the warning triangle ahead of every other symbol. Leave the field empty and alerts stay off.
+5. **Temperature unit**: Auto uses that entity's unit (`°F` or `°C`). Choose F or C when you want the digits in the other unit. The high is converted only when the entity's unit and your choice differ. Hot, cold, and the wind threshold use this same choice.
+6. **Rotation** is 0–359 degrees counter-clockwise. 0 matches the design as published. Turn it if the top of the table is not the far edge.
+7. **Auto Weather starts on** is only the first value of the **Auto Weather** switch. The switch starts off unless this is on before the switch has ever been saved. After that, the switch is the control, and Home Assistant remembers it.
+8. **Weather cooldown** is how long Auto Weather waits before it draws again. The default is 30 minutes.
 
 On the table's device page, **Draw Weather** and **Auto Weather** sit with the other buttons and switches. Add those entities to a dashboard card if you want them next to the rest of your controls.
 
@@ -255,7 +263,7 @@ data:
   play: true
 ```
 
-Or name them. `condition` is `sunny`, `partlycloudy`, `cloudy`, `fog`, `rain`, `thunderstorm`, `snow`, `clear_night`, or `windy`. `temperature` is an integer from -99 to 199. `play` defaults to true, and it still plays only while Power is on.
+Or name them. `condition` is one of the symbols above. `temperature` is an integer from -99 to 199. `play` defaults to true, and it still plays only while Power is on. A named condition is drawn as that symbol; the wind, hot, cold, heavy-rain, and alert rules apply when the condition is left to the forecast.
 
 ```yaml
 action: homedics_drift.draw_weather
@@ -265,7 +273,7 @@ data:
   play: true
 ```
 
-Forecast conditions: sunny draws the sun; partlycloudy draws the sun behind a cloud; cloudy and exceptional draw the clouds; fog draws the mist; rainy, pouring, and hail draw the rain; lightning and lightning-rainy draw the thunderstorm; snowy and snowy-rainy draw the snow; clear-night draws the moon; windy and windy-variant draw the gusts.
+The day's symbol is chosen in this order: alert, thunderstorm (`lightning`, `lightning-rainy`), hail, sleet (`snowy-rainy`), snow, heavy rain (`pouring`, or a chance of precipitation at or above the threshold), rain, fog, hot, cold, then partly cloudy, cloudy, exceptional, sunny, or clear night. Wind at or above the threshold is added after that choice.
 
 The pattern is always stored under the name **Weather**, in the same slot each time. The id is 50000 or above. It will not replace a pattern that came with the table, the protected clean pattern, or a pattern that is drawing. If only the high changed and Weather is still the pattern on the sand, and the ball is idle, just the temperature digits are redrawn.
 

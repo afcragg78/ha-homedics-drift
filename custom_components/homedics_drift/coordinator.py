@@ -38,10 +38,15 @@ from .const import (
     CONF_AI_TASK_ENTITY,
     CONF_CLEAN_BEFORE_AI,
     CONF_CONVERSATION_AGENT,
+    CONF_WEATHER_ALERT,
+    CONF_WEATHER_COLD,
     CONF_WEATHER_COOLDOWN_MIN,
     CONF_WEATHER_ENTITY,
+    CONF_WEATHER_HEAVY,
+    CONF_WEATHER_HOT,
     CONF_WEATHER_ROTATION,
     CONF_WEATHER_UNIT,
+    CONF_WEATHER_WIND,
     DOMAIN,
     NOTIFY_UUID,
     POWER_DEBOUNCE,
@@ -92,14 +97,26 @@ from .weather import (
     WEATHER_NAME,
     DesignFinish,
     WeatherDesignError,
+    alert_active,
     auto_weather_allowed,
+    choose_picture,
+    cold_threshold_value,
     convert_temperature,
+    convert_wind_speed,
     cooldown_minutes,
     forecast_high,
+    forecast_low,
+    forecast_probability,
+    forecast_wind_speed,
+    heavy_probability_value,
+    hot_threshold_value,
     map_condition,
     render_weather_thr,
     rotation_degrees,
     temperature_panel_only,
+    temperature_threshold_unit,
+    wind_threshold_unit,
+    wind_threshold_value,
 )
 from .protocol import (
     CMD_PLAYLIST_LIST,
@@ -1528,7 +1545,12 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         finally:
             self._weather_queued = False
 
-    async def _daily_forecast(self, entity_id: str) -> tuple[str, float, str | None]:
+    def _entity_attributes(self, entity_id: str) -> dict[str, object]:
+        state = self.hass.states.get(entity_id)
+        attributes = getattr(state, "attributes", None) if state is not None else None
+        return attributes if isinstance(attributes, dict) else {}
+
+    async def _daily_forecast(self, entity_id: str) -> dict[str, object]:
         if not self.hass.services.has_service("weather", "get_forecasts"):
             raise HomeAssistantError("The weather forecast service is not available")
         try:
@@ -1547,13 +1569,32 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
             condition, temperature = forecast_high(result, entity_id)
         except WeatherDesignError as err:
             raise HomeAssistantError(err.message) from err
-        state = self.hass.states.get(entity_id)
-        unit = None
-        if state is not None:
-            attributes = getattr(state, "attributes", None)
-            if isinstance(attributes, dict):
-                unit = attributes.get("temperature_unit")
-        return condition, temperature, unit if isinstance(unit, str) else None
+        wind = forecast_wind_speed(result, entity_id)
+        attributes = self._entity_attributes(entity_id)
+        if wind is None:
+            current = attributes.get("wind_speed")
+            if isinstance(current, (int, float)) and not isinstance(current, bool):
+                wind = float(current)
+        temp_unit = attributes.get("temperature_unit")
+        wind_unit = attributes.get("wind_speed_unit")
+        return {
+            "condition": condition,
+            "high": temperature,
+            "low": forecast_low(result, entity_id),
+            "wind": wind,
+            "probability": forecast_probability(result, entity_id),
+            "temperature_unit": temp_unit if isinstance(temp_unit, str) else None,
+            "wind_unit": wind_unit if isinstance(wind_unit, str) else None,
+        }
+
+    def _alert_on(self) -> bool:
+        entity_id = self.config_entry.options.get(CONF_WEATHER_ALERT, "")
+        if not isinstance(entity_id, str) or not entity_id.strip():
+            return False
+        state = self.hass.states.get(entity_id.strip())
+        if state is None:
+            return False
+        return alert_active(getattr(state, "state", None))
 
     async def _resolve_weather(
         self, condition: str | None, temperature: int | None
@@ -1570,17 +1611,47 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
                 "Choose a weather entity in the HoMedics Drift options (Configure) "
                 "before drawing the forecast"
             )
-        raw_condition, raw_temperature, unit = await self._daily_forecast(entity_id)
+        forecast = await self._daily_forecast(entity_id)
+        preference = self.config_entry.options.get(CONF_WEATHER_UNIT, "auto")
+        temp_unit = temperature_threshold_unit(preference, forecast["temperature_unit"])
+        speed_unit = wind_threshold_unit(preference, forecast["temperature_unit"])
+        options = self.config_entry.options
         try:
-            chosen = map_condition(condition or raw_condition)
             if temperature is None:
-                high = convert_temperature(
-                    raw_temperature,
-                    unit,
-                    self.config_entry.options.get(CONF_WEATHER_UNIT, "auto"),
-                )
+                high = convert_temperature(forecast["high"], forecast["temperature_unit"], preference)
             else:
                 high = int(temperature)
+            low = forecast["low"]
+            low_in_unit = (
+                None
+                if low is None
+                else convert_temperature(low, forecast["temperature_unit"], preference)
+            )
+            wind = forecast["wind"]
+            wind_in_unit = None
+            if isinstance(wind, (int, float)) and not isinstance(wind, bool):
+                source = forecast["wind_unit"]
+                if isinstance(source, str):
+                    wind_in_unit = convert_wind_speed(float(wind), source, speed_unit)
+            if condition:
+                chosen = map_condition(condition)
+            else:
+                chosen = choose_picture(
+                    condition=str(forecast["condition"]),
+                    wind_speed=wind_in_unit,
+                    wind_threshold=wind_threshold_value(options.get(CONF_WEATHER_WIND), speed_unit),
+                    temperature_high=float(high),
+                    temperature_low=None if low_in_unit is None else float(low_in_unit),
+                    hot_threshold=hot_threshold_value(options.get(CONF_WEATHER_HOT), temp_unit),
+                    cold_threshold=cold_threshold_value(options.get(CONF_WEATHER_COLD), temp_unit),
+                    precipitation_probability=(
+                        None
+                        if forecast["probability"] is None
+                        else float(forecast["probability"])  # type: ignore[arg-type]
+                    ),
+                    heavy_threshold=heavy_probability_value(options.get(CONF_WEATHER_HEAVY)),
+                    alert=self._alert_on(),
+                )
         except WeatherDesignError as err:
             raise HomeAssistantError(err.message) from err
         return chosen, high

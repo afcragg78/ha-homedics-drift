@@ -34,7 +34,7 @@
     thunderstorm  a cloud, a bold lightning bolt, and a few slanted rain lines
     snow          a big snowflake and two small ones, in gently drifting lines
     clear_night   a crescent moon and a few small stars
-    windy         swirling gust curls in wavy wind
+    windy         gust strokes — swooshes, S-curves, and speed lines — each ending in a tight curl
 
 Sun, clouds, rain, snow, and the temperature digits are Josh Lannin's. The other
 five pictures use the same construction.
@@ -332,6 +332,28 @@ def sun_behind(c, cloud_shape, r_in=0.15, r_out=0.32, rays=12, disc=0.13):
     return Shape(c, radius, snap, detail)
 
 
+def pebble(c, r):
+    """A round hailstone."""
+    return Shape(c, lambda phi: r)
+
+
+def warning_sign(c, r=0.34):
+    """A point-up triangle with an exclamation mark, for a weather alert."""
+    verts = [
+        (r * math.cos(math.radians(a)), r * math.sin(math.radians(a)))
+        for a in (90, 210, 330)
+    ]
+    edge = _edge_radius(verts)
+
+    def detail(phi):
+        bar = line((c[0], c[1] + r * 0.42), (c[0], c[1] + r * 0.02))
+        dot_c = (c[0], c[1] - r * 0.22)
+        dot = [polar(dot_c, r * 0.07, math.radians(i)) for i in range(0, 361, 24)]
+        return bar + dot + [polar(c, edge(phi), phi)]
+
+    return Shape(c, edge, detail=detail)
+
+
 def band(c, w, h, waves=3.0, phase=0.0):
     """A flat mist bank: a wide, low ellipse with a wavy edge."""
     def radius(phi):
@@ -341,28 +363,59 @@ def band(c, w, h, waves=3.0, phase=0.0):
     return Shape(c, radius)
 
 
-def curl(c, r, spin=1.0, tilt=0.0):
-    """A gust: an oval head swept smooth, with a spiral groove for the curl."""
-    def radius(phi):
-        ang = phi - tilt
-        return r * (0.76 + 0.30 * math.cos(ang))
+def _spiral(center, r_outer, r_inner, turns, a0, spin):
+    """Tight spiral from the outside in. `spin` is the sign of the angle change."""
+    arc = abs(turns) * math.pi * (r_outer + r_inner)
+    n = max(8, int(arc / STEP))
+    pts = []
+    for i in range(n + 1):
+        t = i / n
+        radius = r_outer + (r_inner - r_outer) * t
+        ang = a0 + spin * turns * 2 * math.pi * t
+        pts.append(polar(center, radius, ang))
+    return pts
 
-    def snap(phi):
-        return tilt
 
-    def detail(phi):
-        turns = 2.15
-        n = max(28, int(turns * 2 * math.pi * r / STEP))
-        pts = []
-        for i in range(n + 1):
-            t = i / n
-            ang = phi + spin * turns * 2 * math.pi * t
-            pts.append(polar(c, max(0.015, radius(ang) * (0.90 - 0.66 * t)), ang))
-        pts.append(polar(c, radius(phi) * 0.42, phi + spin * 0.35))
-        pts.append(polar(c, radius(phi), phi))
-        return pts
+def _curl_out(join, hang, radius=0.11, turns=1.85):
+    """From the eye out to `join`, leaving toward +x. The curl sits above or below the line."""
+    if hang == "above":
+        center = (join[0], join[1] + radius)
+        inward = _spiral(center, radius, 0.036, turns, -math.pi / 2, -1)
+    else:
+        center = (join[0], join[1] - radius)
+        inward = _spiral(center, radius, 0.036, turns, math.pi / 2, 1)
+    return inward[::-1]
 
-    return Shape(c, radius, snap, detail)
+
+def _curl_in(join, hang, radius=0.11, turns=1.85):
+    """From `join` into the eye, arriving from a line that was heading +x."""
+    if hang == "below":
+        center = (join[0], join[1] - radius)
+        return _spiral(center, radius, 0.036, turns, math.pi / 2, -1)
+    center = (join[0], join[1] + radius)
+    return _spiral(center, radius, 0.036, turns, -math.pi / 2, 1)
+
+
+def _swoosh(x0, x1, y, bow=0.012):
+    n = max(2, int(abs(x1 - x0) / STEP))
+    pts = []
+    for i in range(n + 1):
+        t = i / n
+        x = x0 + (x1 - x0) * t
+        pts.append((x, y + bow * math.sin(math.pi * t)))
+    return pts
+
+
+def _s_curve(x0, x1, y, amp):
+    """An S that starts and ends horizontal, so a curl can sit on either end."""
+    n = max(4, int(abs(x1 - x0) / STEP))
+    pts = []
+    for i in range(n + 1):
+        t = i / n
+        x = x0 + (x1 - x0) * t
+        envelope = math.sin(math.pi * t) ** 2
+        pts.append((x, y + amp * math.sin(2 * math.pi * t) * envelope))
+    return pts
 
 
 # ---------------------------------------------------------------------------------------------
@@ -717,31 +770,254 @@ def scene(name):
         def mist(s, k):
             return 0.026 * math.sin(3.3 * s + 0.55 * k)
         return banks, [(parallel_rows(0, 0.058, mist), Frame())]
-    if name == "windy":
-        gusts = [
-            curl((-0.42, -0.24), 0.17, spin=1.0, tilt=0.9),
-            curl((0.02, -0.50), 0.24, spin=-1.0, tilt=-0.45),
-            curl((0.46, -0.22), 0.15, spin=1.0, tilt=2.1),
+    if name == "hot":
+        # More rays than the fair-weather sun, so the disc reads as blazing.
+        day = sun((0, -0.42), 0.15, 0.36, rays=14, disc=0.14)
+        return [day], [(ring_rows(day.c, day.rmax + 0.06, 0.10), Frame())]
+    if name == "cold":
+        frost = flake((0, -0.42), 0.40)
+        spark = [
+            sun((-0.55, -0.22), 0.05, 0.09, rays=4, disc=0.02),
+            sun((0.55, -0.22), 0.05, 0.09, rays=4, disc=0.02),
         ]
-
-        def gust(s, k, shapes=gusts):
-            y0 = -RIM + 0.033 + 0.066 * k
-            dy = 0.032 * math.sin(2.4 * s + 0.45 * k)
-            for shape in shapes:
-                reach = shape.rmax * 2.3
-                dx = s - shape.c[0]
-                q = (dx / reach) ** 2 + ((y0 - shape.c[1]) / reach) ** 2
-                if q < 1.0:
-                    dy += 0.05 * (dx / reach) * (1.0 - q)
-            return dy
-        return gusts, [(parallel_rows(0, 0.066, gust), Frame())]
+        return [frost, *spark], [
+            (parallel_rows(0, 0.09, lambda s, k: 0.012 * math.sin(2.0 * s + 0.4 * k)), Frame())
+        ]
+    if name == "hail":
+        sky = cloud((0, -0.22), 0.82, 0.30)
+        stones = [
+            pebble((-0.36, -0.58), 0.09),
+            pebble((-0.12, -0.70), 0.10),
+            pebble((0.14, -0.60), 0.09),
+            pebble((0.38, -0.74), 0.08),
+        ]
+        return [sky, *stones], [
+            (parallel_rows(68, 0.10), Frame(hi=-0.36)),
+            (parallel_rows(0, 0.09, lambda s, k: 0.01 * math.sin(2.2 * s + 0.3 * k)), Frame(lo=-0.36)),
+        ]
+    if name == "sleet":
+        sky = cloud((0, -0.22), 0.80, 0.30)
+        shapes = [
+            sky,
+            drop((-0.34, -0.62), tip=0.20),
+            flake((-0.08, -0.66), 0.16, twigs=False),
+            drop((0.20, -0.70), tip=0.18),
+            flake((0.42, -0.58), 0.13, twigs=False),
+        ]
+        return shapes, [
+            (parallel_rows(78, 0.09), Frame(hi=-0.36)),
+            (parallel_rows(0, 0.09), Frame(lo=-0.36)),
+        ]
+    if name == "heavy_rain":
+        sky = cloud((0, -0.20), 0.90, 0.30)
+        drops = [
+            drop((x, -0.58 - 0.06 * (i % 2)), tip=0.16)
+            for i, x in enumerate((-0.46, -0.23, 0.0, 0.23, 0.46))
+        ]
+        return [sky, *drops], [
+            (parallel_rows(74, 0.07), Frame(hi=-0.34)),
+            (parallel_rows(0, 0.09), Frame(lo=-0.34)),
+        ]
+    if name == "alert":
+        sign = warning_sign((0, -0.42), 0.38)
+        return [sign], [
+            (parallel_rows(0, 0.10, lambda s, k: 0.01 * math.sin(1.6 * s + k)), Frame())
+        ]
     raise SystemExit(
         f"unknown condition {name!r}: sunny, partlycloudy, cloudy, fog, rain, "
         "thunderstorm, snow, clear_night or windy"
     )
 
 
+def _stroke_twice(pts):
+    """Outline drawn twice: out along the stroke, back on a parallel just beside it."""
+    sampled = [pts[0]]
+    for p in pts[1:]:
+        if math.dist(sampled[-1], p) > 1e-9:
+            sampled += line(sampled[-1], p)[1:]
+    side = offset(sampled, 0.03)
+    return sampled + side[::-1]
+
+
+def _resample(pts):
+    sampled = [pts[0]]
+    for p in pts[1:]:
+        if math.dist(sampled[-1], p) > 1e-9:
+            sampled += line(sampled[-1], p)[1:]
+    return sampled
+
+
+def _curl_then_tail(join, tail, hang="above", radius=0.11, turns=2.15):
+    """Curl drawn twice, then the tail, then back just beside the tail.
+
+    The third pass along the curl is the ball travelling out to the tail.
+    Finishes beside the left end of the tail.
+    """
+    curl = _resample(_curl_out(join, hang, radius, turns))
+    tail = _resample(tail)
+    back = offset(tail, 0.032)[::-1]
+    return curl + curl[::-1][1:] + curl[1:] + tail[1:] + back
+
+
+def _tail_then_curl(tail, join, hang="below", radius=0.09, turns=2.05):
+    """Tail into a curl. The curl is drawn twice; the tail comes back beside itself.
+
+    Finishes beside the left end of the tail.
+    """
+    tail = _resample(tail)
+    curl = _resample(_curl_in(join, hang, radius, turns))
+    back = offset(tail, 0.032)[::-1]
+    return tail + curl[1:] + curl[::-1][1:] + line(join, back[0])[1:] + back
+
+
+def _retrace(pts):
+    """The same stroke twice, so a curve does not weave across itself."""
+    pts = _resample(pts)
+    return pts + pts[::-1][1:]
+
+
+def _lay(path, pts):
+    if path and math.dist(path[-1], pts[0]) > 1e-6:
+        path += line(path[-1], pts[0])[1:]
+    path += pts
+    return path
+
+
+def _tail_then_curl_same(tail, join, hang="below", radius=0.08, turns=2.1):
+    """An S or wave, drawn twice on the same groove, ending in a tight curl."""
+    tail = _resample(tail)
+    curl = _resample(_curl_in(join, hang, radius, turns))
+    return tail + curl[1:] + curl[::-1][1:] + tail[::-1][1:]
+
+
+def wind_gusts():
+    """Classic wind marks filling the sand below the temperature.
+
+    Five gusts, staggered by length, all blowing left to right. Stacked
+    swooshes, closer speed lines, and an S each end in a tight spiral. Every
+    stroke is drawn twice. The ball drops from the left end of one stroke to
+    the next, so the connecting travel stays on the stack.
+    """
+    path = []
+    left = -0.36
+
+    # (a) Three swooshes. The curl sits above the long line and stays under the panel.
+    join = (left, -0.18)
+    _lay(path, _curl_then_tail(join, _swoosh(join[0], 0.70, join[1], 0.012), "above", 0.09, 2.35))
+    _lay(path, _stroke_twice(_swoosh(left, 0.46, -0.27, 0.01)))
+    _lay(path, _stroke_twice(_swoosh(left, 0.18, -0.35, 0.008)))
+
+    # (c) Three speed lines. The long one curls at the right, clear of the shorter tails.
+    _lay(path, _tail_then_curl(
+        _swoosh(left, 0.48, -0.46, 0.006), (0.48, -0.46), "above", 0.075, 2.2,
+    ))
+    _lay(path, _stroke_twice(_swoosh(left, 0.26, -0.525, 0.005)))
+    _lay(path, _stroke_twice(_swoosh(left, 0.06, -0.585, 0.004)))
+
+    # (b) A wide S across the lower middle, curl hanging under the right end.
+    _lay(path, _tail_then_curl_same(
+        _s_curve(-0.58, 0.42, -0.68, 0.10), (0.42, -0.68), "below", 0.07, 2.15,
+    ))
+
+    # (a) Two shorter swooshes along the bottom, curl on the left.
+    join = (-0.22, -0.80)
+    _lay(path, _curl_then_tail(join, _swoosh(join[0], 0.22, join[1], 0.006), "above", 0.055, 2.0))
+    _lay(path, _stroke_twice(_swoosh(join[0], 0.16, -0.865, 0.004)))
+    # Extra swooshes in the gaps, so the lower half stays full without crossing a curl.
+    _lay(path, _stroke_twice(_swoosh(-0.62, 0.66, -0.405, 0.01)))
+    _lay(path, _stroke_twice(_swoosh(-0.50, 0.10, -0.755, 0.008)))
+    return path
+
+
+def _draw_shapes(shapes):
+    """Sweep and outline shapes, with no full-table background. Links end inside the next shape."""
+    path = []
+    for index, shape in enumerate(shapes):
+        nxt = shapes[index + 1].c if index + 1 < len(shapes) else (shape.c[0] + 0.3, shape.c[1])
+        if path:
+            path += line(path[-1], shape.c)[1:]
+        path += shape.draw(nxt)
+    return path
+
+
+def _emblem(name):
+    """The day's symbol, kept to the left so gusts can blow past it."""
+    if name == "rain":
+        shapes = [
+            cloud((-0.32, -0.28), 0.52, 0.20),
+            drop((-0.46, -0.58), tip=0.16),
+            drop((-0.30, -0.68), tip=0.16),
+            drop((-0.14, -0.58), tip=0.14),
+        ]
+    elif name == "heavy_rain":
+        shapes = [cloud((-0.30, -0.26), 0.55, 0.20)] + [
+            drop((x, -0.58 - 0.05 * (i % 2)), tip=0.13)
+            for i, x in enumerate((-0.50, -0.34, -0.18, -0.02))
+        ]
+    elif name == "thunderstorm":
+        shapes = [cloud((-0.30, -0.24), 0.55, 0.20), bolt((-0.28, -0.58), scale=0.34)]
+    elif name == "hail":
+        shapes = [
+            cloud((-0.32, -0.26), 0.50, 0.18),
+            pebble((-0.46, -0.55), 0.07),
+            pebble((-0.28, -0.66), 0.08),
+            pebble((-0.10, -0.54), 0.07),
+        ]
+    elif name == "sleet":
+        shapes = [
+            cloud((-0.32, -0.26), 0.50, 0.18),
+            drop((-0.46, -0.58), tip=0.14),
+            flake((-0.24, -0.62), 0.13, twigs=False),
+            drop((-0.06, -0.70), tip=0.12),
+        ]
+    elif name == "snow":
+        shapes = [flake((-0.28, -0.42), 0.28), flake((-0.55, -0.22), 0.10, twigs=False)]
+    elif name == "fog":
+        shapes = [band((-0.28, -0.32), 0.55, 0.14, 2.2, 0.4), band((-0.22, -0.55), 0.42, 0.12, 2.4, 1.2)]
+    elif name == "hot":
+        shapes = [sun((-0.30, -0.42), 0.12, 0.26, rays=14, disc=0.10)]
+    elif name == "cold":
+        shapes = [flake((-0.28, -0.42), 0.26)]
+    elif name == "alert":
+        shapes = [warning_sign((-0.28, -0.42), 0.28)]
+    else:
+        shapes = [cloud((-0.30, -0.40), 0.48, 0.18)]
+    return _draw_shapes(shapes)
+
+
+def _side_gusts():
+    """A short run of the wind marks, on the right of a combined picture."""
+    path = []
+    _lay(path, _curl_then_tail((0.08, -0.20), _swoosh(0.08, 0.68, -0.20, 0.01), "above", 0.07, 2.0))
+    _lay(path, _stroke_twice(_swoosh(0.14, 0.52, -0.32, 0.008)))
+    _lay(path, _tail_then_curl_same(_s_curve(0.05, 0.58, -0.52, 0.06), (0.58, -0.52), "below", 0.06, 1.9))
+    _lay(path, _stroke_twice(_swoosh(0.10, 0.62, -0.66, 0.008)))
+    _lay(path, _stroke_twice(_swoosh(0.16, 0.58, -0.76, 0.006)))
+    _lay(path, _curl_then_tail((0.12, -0.84), _swoosh(0.12, 0.48, -0.84, 0.005), "above", 0.05, 1.8))
+    for y in (-0.26, -0.38, -0.46, -0.60, -0.72):
+        _lay(path, _stroke_twice(_swoosh(0.28, 0.70, y, 0.004)))
+    return path
+
+
+def combined_picture(base):
+    """The main symbol on the left, and curly gusts blowing through the right."""
+    symbol = _emblem(base)
+    gusts = _side_gusts()
+    if not symbol:
+        return gusts
+    return symbol + line(symbol[-1], gusts[0])[1:] + gusts
+
+
 def build(condition, value):
+    if condition == "windy":
+        path = wind_gusts()
+    elif isinstance(condition, str) and condition.endswith("_wind"):
+        path = combined_picture(condition[: -len("_wind")])
+    else:
+        path = None
+    if path is not None:
+        text, cap = panel(value)
+        return path + rim_arc(path[-1], text[0]) + text, cap
     shapes, passes = scene(condition)
     rows = passes[0][0]
     path = []

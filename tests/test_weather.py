@@ -21,7 +21,14 @@ from custom_components.homedics_drift.weather import (
     convert_temperature,
     forecast_high,
     initial_auto_weather,
+    DRAWINGS,
     PICTURES,
+    alert_active,
+    choose_picture,
+    convert_wind_speed,
+    default_cold_threshold,
+    default_hot_threshold,
+    default_wind_threshold,
     map_condition,
     render_weather_thr,
     rotate_xy,
@@ -46,12 +53,12 @@ from custom_components.homedics_drift.weather_design import build
         ("windy-variant", "windy"),
         ("exceptional", "cloudy"),
         ("rainy", "rain"),
-        ("pouring", "rain"),
+        ("pouring", "heavy_rain"),
         ("lightning", "thunderstorm"),
         ("lightning-rainy", "thunderstorm"),
-        ("hail", "rain"),
+        ("hail", "hail"),
         ("snowy", "snow"),
-        ("snowy-rainy", "snow"),
+        ("snowy-rainy", "sleet"),
         ("Sunny", "sunny"),
         ("rain", "rain"),
         ("snow", "snow"),
@@ -143,7 +150,94 @@ def test_draw_weather_lists_every_picture() -> None:
         assert f"- {name}\n" in block
 
 
-@pytest.mark.parametrize("condition", PICTURES)
+def _forecast(**overrides: object) -> str:
+    values: dict[str, object] = {
+        "condition": "sunny",
+        "wind_speed": None,
+        "wind_threshold": 15,
+        "temperature_high": 70,
+        "temperature_low": 50,
+        "hot_threshold": 90,
+        "cold_threshold": 32,
+        "precipitation_probability": None,
+        "heavy_threshold": 70,
+        "alert": False,
+    }
+    values.update(overrides)
+    return choose_picture(**values)  # type: ignore[arg-type]
+
+
+def test_wind_replaces_a_fair_sky_and_joins_the_other_symbols() -> None:
+    assert _forecast(condition="sunny", wind_speed=15) == "windy"
+    assert _forecast(condition="clear-night", wind_speed=20) == "windy"
+    assert _forecast(condition="partlycloudy", wind_speed=16) == "windy"
+    assert _forecast(condition="cloudy", wind_speed=15) == "windy"
+    assert _forecast(condition="sunny", wind_speed=14.9) == "sunny"
+    assert _forecast(condition="rainy", wind_speed=30) == "rain_wind"
+    assert _forecast(condition="lightning-rainy", wind_speed=40) == "thunderstorm_wind"
+    assert _forecast(condition="snowy", wind_speed=20) == "snow_wind"
+    assert _forecast(condition="fog", wind_speed=30) == "fog_wind"
+    assert _forecast(condition="hail", wind_speed=20) == "hail_wind"
+    assert _forecast(condition="snowy-rainy", wind_speed=20) == "sleet_wind"
+    assert _forecast(condition="hail", wind_speed=10) == "hail"
+    assert _forecast(condition="sunny", wind_speed=None) == "sunny"
+    assert _forecast(condition="windy", wind_speed=0) == "windy"
+    assert _forecast(condition="windy-variant", wind_speed=1) == "windy"
+
+
+def test_symbol_precedence_and_the_new_triggers() -> None:
+    assert _forecast(alert=True, condition="sunny") == "alert"
+    assert _forecast(alert=True, condition="rainy", wind_speed=40) == "alert_wind"
+    assert _forecast(condition="lightning") == "thunderstorm"
+    assert _forecast(condition="hail") == "hail"
+    assert _forecast(condition="snowy-rainy") == "sleet"
+    assert _forecast(condition="snowy") == "snow"
+    assert _forecast(condition="pouring") == "heavy_rain"
+    assert _forecast(condition="rainy", precipitation_probability=70) == "heavy_rain"
+    assert _forecast(condition="rainy", precipitation_probability=69) == "rain"
+    assert _forecast(condition="rainy", precipitation_probability=None) == "rain"
+    assert _forecast(condition="snowy", precipitation_probability=90) == "snow"
+    assert _forecast(condition="fog") == "fog"
+    assert _forecast(condition="sunny", temperature_high=90) == "hot"
+    assert _forecast(condition="sunny", temperature_high=89) == "sunny"
+    assert _forecast(condition="rainy", temperature_high=100) == "rain"
+    assert _forecast(condition="cloudy", temperature_low=32) == "cold"
+    assert _forecast(condition="clear-night", temperature_low=31) == "cold"
+    assert _forecast(condition="cloudy", temperature_low=33) == "cloudy"
+    assert _forecast(condition="fog", temperature_low=0) == "fog"
+    assert _forecast(condition="sunny", temperature_high=95, temperature_low=20) == "hot"
+    assert _forecast(condition="sunny", temperature_high=95, wind_speed=20) == "hot_wind"
+    assert _forecast(condition="cloudy", temperature_low=20, wind_speed=20) == "cold_wind"
+
+
+def test_wind_units_match_home_assistant_speed_ratios() -> None:
+    assert convert_wind_speed(1, "m/s", "km/h") == pytest.approx(3.6)
+    assert convert_wind_speed(15, "mph", "km/h") == pytest.approx(24.14016, rel=1e-4)
+    assert convert_wind_speed(25, "km/h", "m/s") == pytest.approx(25 / 3.6)
+    assert convert_wind_speed(10, "kn", "km/h") == pytest.approx(18.52)
+    assert convert_wind_speed(1, "ft/s", "m/s") == pytest.approx(0.3048, rel=1e-4)
+    assert convert_wind_speed(10, "m/s", "mph") == pytest.approx(22.36936, rel=1e-4)
+    assert default_wind_threshold("mph") == 15
+    assert default_wind_threshold("km/h") == 25
+    assert default_hot_threshold("F") == 90
+    assert default_hot_threshold("C") == 32
+    assert default_cold_threshold("F") == 32
+    assert default_cold_threshold("C") == 0
+    # 10 m/s is a moderate breeze in both conventions.
+    assert _forecast(condition="sunny", wind_speed=convert_wind_speed(10, "m/s", "mph")) == "windy"
+    assert _forecast(
+        condition="sunny",
+        wind_speed=convert_wind_speed(5, "m/s", "km/h"),
+        wind_threshold=25,
+    ) == "sunny"
+    assert alert_active("on") is True
+    assert alert_active("off") is False
+    assert alert_active("2") is True
+    assert alert_active("0") is False
+    assert alert_active("unknown") is False
+
+
+@pytest.mark.parametrize("condition", DRAWINGS)
 def test_each_picture_fits_on_the_table(condition: str) -> None:
     text = render_weather_thr(condition, 55, 0, panel_only=False)
     parsed = parse_thr(text)
@@ -174,6 +268,11 @@ def test_options_default_to_auto_unit_no_rotation_and_weather_off() -> None:
         "weather_rotation": 0,
         "weather_after_pattern": False,
         "weather_cooldown_min": 30,
+        "weather_wind_threshold": None,
+        "weather_hot_threshold": None,
+        "weather_cold_threshold": None,
+        "weather_heavy_probability": None,
+        "weather_alert_entity": "",
     }
     assert weather_options_from({"weather_rotation": 400, "weather_unit": "Kelvin"}) == {
         "weather_entity": "",
@@ -181,6 +280,11 @@ def test_options_default_to_auto_unit_no_rotation_and_weather_off() -> None:
         "weather_rotation": 359,
         "weather_after_pattern": False,
         "weather_cooldown_min": 30,
+        "weather_wind_threshold": None,
+        "weather_hot_threshold": None,
+        "weather_cold_threshold": None,
+        "weather_heavy_probability": None,
+        "weather_alert_entity": "",
     }
 
 

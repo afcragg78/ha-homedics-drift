@@ -21,15 +21,28 @@ from .const import (
     CONF_CONVERSATION_AGENT,
     CONF_PHOTO_CAMERA,
     CONF_WEATHER_AFTER_PATTERN,
+    CONF_WEATHER_ALERT,
+    CONF_WEATHER_COLD,
     CONF_WEATHER_COOLDOWN_MIN,
     CONF_WEATHER_ENTITY,
+    CONF_WEATHER_HEAVY,
+    CONF_WEATHER_HOT,
     CONF_WEATHER_ROTATION,
     CONF_WEATHER_UNIT,
+    CONF_WEATHER_WIND,
     DOMAIN,
 )
 from .drawing import conversation_dropdown
 from .protocol import is_drift_name, normalize_advertised_name
-from .weather import weather_options_from
+from .weather import (
+    cold_threshold_value,
+    heavy_probability_value,
+    hot_threshold_value,
+    temperature_threshold_unit,
+    weather_options_from,
+    wind_threshold_unit,
+    wind_threshold_value,
+)
 
 
 def _ai_task_dropdown(hass: Any) -> list[dict[str, str]]:
@@ -85,6 +98,10 @@ class DriftOptionsFlow(OptionsFlow):
                 CONF_WEATHER_ROTATION: weather[CONF_WEATHER_ROTATION],
                 CONF_WEATHER_AFTER_PATTERN: weather[CONF_WEATHER_AFTER_PATTERN],
                 CONF_WEATHER_COOLDOWN_MIN: weather[CONF_WEATHER_COOLDOWN_MIN],
+                CONF_WEATHER_WIND: user_input.get(CONF_WEATHER_WIND),
+                CONF_WEATHER_HOT: user_input.get(CONF_WEATHER_HOT),
+                CONF_WEATHER_COLD: user_input.get(CONF_WEATHER_COLD),
+                CONF_WEATHER_HEAVY: user_input.get(CONF_WEATHER_HEAVY),
             }
             for key in (CONF_AI_TASK_ENTITY, CONF_CONVERSATION_AGENT):
                 value = user_input.get(key, self.config_entry.options.get(key))
@@ -96,6 +113,9 @@ class DriftOptionsFlow(OptionsFlow):
             camera = user_input.get(CONF_PHOTO_CAMERA)
             if isinstance(camera, str) and camera.strip():
                 cleaned[CONF_PHOTO_CAMERA] = camera.strip()
+            alert = user_input.get(CONF_WEATHER_ALERT, "")
+            if isinstance(alert, str) and alert.strip():
+                cleaned[CONF_WEATHER_ALERT] = alert.strip()
             return self.async_create_entry(title="", data=cleaned)
         current = self.config_entry.options
         weather = weather_options_from(current)
@@ -217,6 +237,101 @@ class DriftOptionsFlow(OptionsFlow):
                     "unit_of_measurement": "min",
                 }
             }
+        )
+        entity_id = weather[CONF_WEATHER_ENTITY] if isinstance(weather[CONF_WEATHER_ENTITY], str) else ""
+        reported = None
+        if entity_id:
+            state = self.hass.states.get(entity_id)
+            attributes = getattr(state, "attributes", None) if state is not None else None
+            if isinstance(attributes, dict):
+                reported = attributes.get("temperature_unit")
+        speed_unit = wind_threshold_unit(weather[CONF_WEATHER_UNIT], reported)
+        degree_unit = "°C" if temperature_threshold_unit(weather[CONF_WEATHER_UNIT], reported) == "C" else "°F"
+        schema[
+            vol.Required(
+                CONF_WEATHER_WIND,
+                default=wind_threshold_value(weather[CONF_WEATHER_WIND], speed_unit),
+            )
+        ] = selector.selector(
+            {
+                "number": {
+                    "min": 0,
+                    "max": 200,
+                    "step": 1,
+                    "mode": "box",
+                    "unit_of_measurement": speed_unit,
+                }
+            }
+        )
+        schema[
+            vol.Required(
+                CONF_WEATHER_HOT,
+                default=hot_threshold_value(
+                    weather[CONF_WEATHER_HOT],
+                    "C" if degree_unit == "°C" else "F",
+                ),
+            )
+        ] = selector.selector(
+            {
+                "number": {
+                    "min": -40,
+                    "max": 140,
+                    "step": 1,
+                    "mode": "box",
+                    "unit_of_measurement": degree_unit,
+                }
+            }
+        )
+        schema[
+            vol.Required(
+                CONF_WEATHER_COLD,
+                default=cold_threshold_value(
+                    weather[CONF_WEATHER_COLD],
+                    "C" if degree_unit == "°C" else "F",
+                ),
+            )
+        ] = selector.selector(
+            {
+                "number": {
+                    "min": -80,
+                    "max": 80,
+                    "step": 1,
+                    "mode": "box",
+                    "unit_of_measurement": degree_unit,
+                }
+            }
+        )
+        schema[
+            vol.Required(
+                CONF_WEATHER_HEAVY,
+                default=heavy_probability_value(weather[CONF_WEATHER_HEAVY]),
+            )
+        ] = selector.selector(
+            {
+                "number": {
+                    "min": 0,
+                    "max": 100,
+                    "step": 1,
+                    "mode": "box",
+                    "unit_of_measurement": "%",
+                }
+            }
+        )
+        alert_current = weather[CONF_WEATHER_ALERT]
+        if isinstance(alert_current, str) and alert_current.strip():
+            alert_key: Any = vol.Optional(
+                CONF_WEATHER_ALERT,
+                description={"suggested_value": alert_current.strip()},
+            )
+        else:
+            alert_key = vol.Optional(CONF_WEATHER_ALERT)
+        schema[alert_key] = selector.EntitySelector(
+            selector.EntitySelectorConfig(
+                filter=[
+                    selector.EntityFilterSelectorConfig(domain="binary_sensor"),
+                    selector.EntityFilterSelectorConfig(domain="sensor"),
+                ]
+            )
         )
         return self.async_show_form(step_id="init", data_schema=vol.Schema(schema))
 

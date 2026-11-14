@@ -193,12 +193,18 @@ draw_weather:
             - sunny
             - partlycloudy
             - cloudy
+            - hot
+            - cold
+            - clear_night
             - fog
             - rain
+            - heavy_rain
             - thunderstorm
+            - hail
+            - sleet
             - snow
-            - clear_night
             - windy
+            - alert
     temperature:
       example: 72
       selector:
