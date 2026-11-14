@@ -923,16 +923,18 @@ def wind_gusts():
     """
     path = []
     # y, wave amplitude, curl radius, curl upward.
+    # Curls are about one and a half times the previous size. The lines stay
+    # far enough apart that a curl does not meet the wave above or below it.
     rows = (
-        (-0.08, 0.055, 0.09, True),
-        (-0.30, 0.05, 0.085, True),
-        (-0.52, 0.048, 0.08, True),
-        (-0.68, 0.04, 0.075, False),
+        (-0.18, 0.05, 0.135, True, 0.02),
+        (-0.42, 0.048, 0.12, True, 0.30),
+        (-0.64, 0.045, 0.11, True, 0.54),
+        (-0.76, 0.038, 0.095, False, 0.10),
     )
-    for y, amp, curl, up in rows:
+    for y, amp, curl, up, x1 in rows:
         start = _on_rim(y, -1)[0]
-        room = _on_rim(y, 1)[0] - curl - 0.08
-        stroke = _retrace(_wave(start, min(0.46, room), y, amp, curl, up))
+        room = _on_rim(y, 1)[0] - curl - 0.05
+        stroke = _retrace(_wave(start, min(x1, room), y, amp, curl, up))
         # A second trip over the same groove. It adds no new line.
         stroke = stroke + stroke[1:]
         if path:
@@ -942,10 +944,15 @@ def wind_gusts():
 
 
 def _draw_from_rim(path, pts):
-    """Draw a gust that sits inside the table, starting and ending on the right rim."""
-    index = max(range(len(pts)), key=lambda i: pts[i][0])
+    """Draw a gust that sits inside the table, starting and ending on the rim.
+
+    The join is the short radial from the point already nearest the edge, so a
+    curl that bulges down does not grow a horizontal line out to the rim.
+    """
+    index = max(range(len(pts)), key=lambda i: math.hypot(*pts[i]))
     outer = pts[index]
-    rim = _on_rim(outer[1], 1)
+    radius = math.hypot(*outer) or 1.0
+    rim = (outer[0] / radius * RIM, outer[1] / radius * RIM)
     stroke = _resample(
         [rim]
         + pts[index:]
@@ -962,21 +969,26 @@ def _draw_from_rim(path, pts):
 def _side_gusts():
     """Three wavy gusts on the right of a combined picture. No divider."""
     path = []
-    # Top rolls up, middle rolls down, bottom curl is smaller.
+    # Top rolls up, middle rolls down, bottom curl is smaller. Radii are about
+    # one and a half times the earlier curls. Each tip sits as far right as the
+    # spiral can go without leaving the sand or meeting the line beside it.
     rows = (
-        (-0.18, 0.045, 0.08, True),
-        (-0.42, 0.04, 0.075, False),
-        (-0.64, 0.035, 0.05, False),
+        (-0.18, 0.040, 0.13, True),
+        (-0.42, 0.034, 0.12, False),
+        (-0.76, 0.028, 0.08, False),
     )
+    limit = 0.942
+    left = 0.06
     for y, amp, curl, up in rows:
-        rim_x = _on_rim(y, 1)[0]
-        pts = _wave(0.08, rim_x - curl - 0.12, y, amp, curl, up)
-        # Slide the curl out until it nearly touches the rim, so the return
-        # to the edge is shorter than the groove and does not read as a stroke.
-        outer = max(pts, key=lambda p: p[0])
-        shift = _on_rim(outer[1], 1)[0] - outer[0] - 0.012
-        pts = [(p[0] + shift, p[1]) for p in pts]
-        path = _draw_from_rim(path, pts)
+        lo, hi = left + 0.08, 0.92
+        for _ in range(28):
+            mid = (lo + hi) / 2
+            spiral = _open_curl((mid, y), curl, 1.25, up)
+            if max(math.hypot(*p) for p in spiral) <= limit:
+                lo = mid
+            else:
+                hi = mid
+        path = _draw_from_rim(path, _wave(left, lo, y, amp, curl, up))
     return path
 
 
@@ -1003,11 +1015,37 @@ def _park(y, reach):
     return -math.sqrt(room) + reach
 
 
+def _sunny_emblem():
+    """A sun on the left. The way out to the rim continues one ray, so it does not cut the others."""
+    center = (-0.40, -0.48)
+    rays = 12
+    day = sun(center, r_in=0.11, r_out=0.28, rays=rays, disc=0.10)
+
+    def snap_tip(phi):
+        return round(phi * rays / (2 * math.pi)) * 2 * math.pi / rays
+
+    day.snap = snap_tip
+    outward = math.atan2(center[1], center[0])
+    path = day.draw((center[0] + math.cos(outward), center[1] + math.sin(outward)))
+    tip = path[-1]
+    dx, dy = tip[0] - center[0], tip[1] - center[1]
+    span = dx * dx + dy * dy
+    if span < 1e-8:
+        return path
+    # The ray from the sun's centre through the tip, continued to the table edge.
+    beam = 2 * (center[0] * dx + center[1] * dy)
+    rest = center[0] * center[0] + center[1] * center[1] - RIM * RIM
+    root = math.sqrt(max(0.0, beam * beam - 4 * span * rest))
+    reach = max((-beam + root) / (2 * span), (-beam - root) / (2 * span))
+    if reach > 1.02:
+        path += line(tip, (center[0] + reach * dx, center[1] + reach * dy))[1:]
+    return path
+
+
 def _emblem(name):
     """The day's symbol on the left. The path ends on the left rim, so gusts join along the edge."""
     if name == "sunny":
-        day = sun((-0.36, -0.42), r_in=0.12, r_out=0.30, rays=12, disc=0.11)
-        return _draw_shapes([day], leave=(day.c[0] - 1.4, day.c[1]))
+        return _sunny_emblem()
     if name == "hot":
         bulb_r, bulb_y = 0.15, -0.56
         return _thermometer(

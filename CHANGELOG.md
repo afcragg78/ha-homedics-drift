@@ -2,7 +2,7 @@
 
 ## 1.4.2
 
-- Wind is four long wavy lines under the temperature, evenly spaced, each ending in a large round curl. The upper curls roll up and the bottom curl rolls down. A combined picture keeps the symbol on the left and puts three curled gusts on the right.
+- Wind is four long wavy lines under the temperature, evenly spaced, each ending in a large round curl. The upper curls roll up and the bottom curl rolls down. A combined picture keeps the symbol on the left and puts three curled gusts on the right. The curls are about one and a half times the earlier size, and on a sunny gust picture the ball leaves along a ray instead of cutting across the sun.
 - The pattern preview on the card is turned by the same weather rotation that is sent to the table, so the card matches the sand.
 
 ## 1.4.1
