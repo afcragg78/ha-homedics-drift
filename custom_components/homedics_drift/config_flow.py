@@ -19,10 +19,16 @@ from .const import (
     CONF_AI_TASK_ENTITY,
     CONF_CLEAN_BEFORE_AI,
     CONF_CONVERSATION_AGENT,
+    CONF_WEATHER_AFTER_PATTERN,
+    CONF_WEATHER_COOLDOWN_MIN,
+    CONF_WEATHER_ENTITY,
+    CONF_WEATHER_ROTATION,
+    CONF_WEATHER_UNIT,
     DOMAIN,
 )
 from .drawing import conversation_dropdown
 from .protocol import is_drift_name, normalize_advertised_name
+from .weather import weather_options_from
 
 
 def _ai_task_dropdown(hass: Any) -> list[dict[str, str]]:
@@ -64,22 +70,31 @@ def _drift_name(discovery: BluetoothServiceInfoBleak) -> str | None:
 
 
 class DriftOptionsFlow(OptionsFlow):
-    """Optional AI Task entity. No API key is stored."""
+    """AI drawing and weather drawing. No API key is stored."""
 
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Choose which assistant draws a prompt, if the user has one."""
+        """Choose an assistant, and the weather entity that draws the forecast."""
         if user_input is not None:
+            weather = weather_options_from(user_input)
             cleaned: dict[str, Any] = {
-                CONF_CLEAN_BEFORE_AI: bool(user_input.get(CONF_CLEAN_BEFORE_AI, True))
+                CONF_CLEAN_BEFORE_AI: bool(user_input.get(CONF_CLEAN_BEFORE_AI, True)),
+                CONF_WEATHER_UNIT: weather[CONF_WEATHER_UNIT],
+                CONF_WEATHER_ROTATION: weather[CONF_WEATHER_ROTATION],
+                CONF_WEATHER_AFTER_PATTERN: weather[CONF_WEATHER_AFTER_PATTERN],
+                CONF_WEATHER_COOLDOWN_MIN: weather[CONF_WEATHER_COOLDOWN_MIN],
             }
             for key in (CONF_AI_TASK_ENTITY, CONF_CONVERSATION_AGENT):
                 value = user_input.get(key, self.config_entry.options.get(key))
                 if isinstance(value, str) and value.strip():
                     cleaned[key] = value.strip()
+            entity = weather[CONF_WEATHER_ENTITY]
+            if isinstance(entity, str) and entity.strip():
+                cleaned[CONF_WEATHER_ENTITY] = entity.strip()
             return self.async_create_entry(title="", data=cleaned)
         current = self.config_entry.options
+        weather = weather_options_from(current)
         try:
             task_options = _ai_task_dropdown(self.hass)
         except Exception:
@@ -126,6 +141,68 @@ class DriftOptionsFlow(OptionsFlow):
                     }
                 }
             )
+        entity_key: Any
+        if weather[CONF_WEATHER_ENTITY]:
+            entity_key = vol.Optional(
+                CONF_WEATHER_ENTITY,
+                description={"suggested_value": weather[CONF_WEATHER_ENTITY]},
+            )
+        else:
+            entity_key = vol.Optional(CONF_WEATHER_ENTITY)
+        schema[entity_key] = selector.EntitySelector(
+            selector.EntitySelectorConfig(domain="weather")
+        )
+        schema[
+            vol.Required(
+                CONF_WEATHER_UNIT,
+                default=weather[CONF_WEATHER_UNIT],
+            )
+        ] = selector.selector(
+            {
+                "select": {
+                    "options": ["auto", "F", "C"],
+                    "mode": "dropdown",
+                }
+            }
+        )
+        schema[
+            vol.Required(
+                CONF_WEATHER_ROTATION,
+                default=weather[CONF_WEATHER_ROTATION],
+            )
+        ] = selector.selector(
+            {
+                "number": {
+                    "min": 0,
+                    "max": 359,
+                    "step": 1,
+                    "mode": "box",
+                    "unit_of_measurement": "°",
+                }
+            }
+        )
+        schema[
+            vol.Required(
+                CONF_WEATHER_AFTER_PATTERN,
+                default=weather[CONF_WEATHER_AFTER_PATTERN],
+            )
+        ] = selector.selector({"boolean": {}})
+        schema[
+            vol.Required(
+                CONF_WEATHER_COOLDOWN_MIN,
+                default=weather[CONF_WEATHER_COOLDOWN_MIN],
+            )
+        ] = selector.selector(
+            {
+                "number": {
+                    "min": 0,
+                    "max": 1440,
+                    "step": 1,
+                    "mode": "box",
+                    "unit_of_measurement": "min",
+                }
+            }
+        )
         return self.async_show_form(step_id="init", data_schema=vol.Schema(schema))
 
 

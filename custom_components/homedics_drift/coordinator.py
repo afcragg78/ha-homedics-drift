@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -37,6 +38,10 @@ from .const import (
     CONF_AI_TASK_ENTITY,
     CONF_CLEAN_BEFORE_AI,
     CONF_CONVERSATION_AGENT,
+    CONF_WEATHER_COOLDOWN_MIN,
+    CONF_WEATHER_ENTITY,
+    CONF_WEATHER_ROTATION,
+    CONF_WEATHER_UNIT,
     DOMAIN,
     NOTIFY_UUID,
     POWER_DEBOUNCE,
@@ -83,6 +88,19 @@ from .patterns import (
 )
 from .preview import render_thr
 from .reconnect import DISCONNECTED_MESSAGE, LinkWatch
+from .weather import (
+    WEATHER_NAME,
+    DesignFinish,
+    WeatherDesignError,
+    auto_weather_allowed,
+    convert_temperature,
+    cooldown_minutes,
+    forecast_high,
+    map_condition,
+    render_weather_thr,
+    rotation_degrees,
+    temperature_panel_only,
+)
 from .protocol import (
     CMD_PLAYLIST_LIST,
     DriftState,
@@ -176,6 +194,9 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         self.ai_pattern_id: int | None = None
         self.ai_progress: int | None = None
         self._draw_active = False
+        self._weather_queued = False
+        self.auto_weather = False
+        self._design_finish = DesignFinish()
         self._upload_ticks = UploadTicks()
         self.gallery_choice = gallery_names()[0]
         self.gallery_preview_at: datetime | None = None
@@ -470,11 +491,23 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
                 progress=message.state.progress,
                 pattern_id=message.state.pattern_id,
             )
+            finished_id = self._design_finish.observe(
+                session_on=self.session_on,
+                drawing=message.state.drawing,
+                progress=message.state.progress,
+                pattern_id=message.state.pattern_id,
+            )
             self.async_set_updated_data(message.state)
             if pause_finished:
                 self.hass.async_create_task(
                     self._pause_finished_design(),
                     name=f"{DOMAIN}-stop-after-{self.address}",
+                )
+            if finished_id is not None and self._auto_weather_ready(finished_id):
+                self._weather_queued = True
+                self.hass.async_create_task(
+                    self._auto_draw_weather(),
+                    name=f"{DOMAIN}-auto-weather-{self.address}",
                 )
             return
         if message.kind is Kind.LIGHT_MODE and message.light_brightness is not None:
@@ -975,6 +1008,7 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         thr: str | None = None,
         source: str = "",
         progress: Any = None,
+        replace_idle: bool = False,
     ) -> int:
         """Store a new pattern. Success is only the table's stored message."""
         cleaned = name.strip()
@@ -1007,6 +1041,8 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
             raise HomeAssistantError(err.message) from err
         async with self._command_lock:
             playing = self.data.pattern_id if self.data is not None else None
+            if replace_idle and (self.data is None or not self.data.drawing):
+                playing = None
             try:
                 reuse = reusable_id(
                     self.library.id_for_upload_name(cleaned),
@@ -1185,6 +1221,7 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         Status is already pushed by the table. Turning Power off cancels the wait.
         """
         seen = False
+        dipped = False
         deadline = asyncio.get_running_loop().time() + 20 * 60
         while asyncio.get_running_loop().time() < deadline:
             if token != self._clean_follow or not self.session_on:
@@ -1192,7 +1229,18 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
             data = self.data
             if data is not None and data.pattern_id == clean_id and data.drawing:
                 seen = True
+                if data.progress < 0.95:
+                    dipped = True
             if seen and data is not None and not data.drawing:
+                return True
+            # The wipe can stay "drawing" at the end when Stop after is holding
+            # its pause for the picture that follows. 99% after a real pass is done.
+            if (
+                dipped
+                and data is not None
+                and data.pattern_id == clean_id
+                and data.progress >= 0.99
+            ):
                 return True
             await asyncio.sleep(0.5)
         return False
@@ -1431,6 +1479,201 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         for percent in self._upload_ticks.crossed(done, total):
             self._announce("uploading", percent=percent, name=name)
 
+    def _weather_entity_id(self) -> str:
+        value = self.config_entry.options.get(CONF_WEATHER_ENTITY, "")
+        return value.strip() if isinstance(value, str) else ""
+
+    def _clean_pattern_ids(self) -> set[int]:
+        found: set[int] = set()
+        protected = self.library.protected_clean_id()
+        if protected is not None:
+            found.add(protected)
+        stock = self._stock_clean_id()
+        if stock is not None:
+            found.add(stock)
+        return found
+
+    def _auto_weather_ready(self, finished_pattern_id: int) -> bool:
+        """Auto Weather is on, and this finish is one it should follow."""
+        if not self.auto_weather or not self._weather_entity_id():
+            return False
+        return auto_weather_allowed(
+            auto_on=True,
+            session_on=self.session_on,
+            draw_active=self._draw_active or self._weather_queued,
+            finished_pattern_id=finished_pattern_id,
+            weather_pattern_id=self.library.id_for_upload_name(WEATHER_NAME),
+            clean_pattern_ids=self._clean_pattern_ids(),
+            now=time.time(),
+            last_weather_at=self.library.last_weather_at,
+            cooldown_min=cooldown_minutes(
+                self.config_entry.options.get(CONF_WEATHER_COOLDOWN_MIN)
+            ),
+        )
+
+    async def _auto_draw_weather(self) -> None:
+        """Scheduled from a status packet. The table is not polled."""
+        try:
+            await self.async_draw_weather(play=True)
+        except HomeAssistantError:
+            _LOGGER.debug("Auto weather did not draw", exc_info=True)
+        finally:
+            self._weather_queued = False
+
+    async def _daily_forecast(self, entity_id: str) -> tuple[str, float, str | None]:
+        if not self.hass.services.has_service("weather", "get_forecasts"):
+            raise HomeAssistantError("The weather forecast service is not available")
+        try:
+            result = await self.hass.services.async_call(
+                "weather",
+                "get_forecasts",
+                {"type": "daily", "entity_id": entity_id},
+                blocking=True,
+                return_response=True,
+            )
+        except HomeAssistantError:
+            raise
+        except Exception as err:
+            raise HomeAssistantError("The weather forecast could not be read") from err
+        try:
+            condition, temperature = forecast_high(result, entity_id)
+        except WeatherDesignError as err:
+            raise HomeAssistantError(err.message) from err
+        state = self.hass.states.get(entity_id)
+        unit = None
+        if state is not None:
+            attributes = getattr(state, "attributes", None)
+            if isinstance(attributes, dict):
+                unit = attributes.get("temperature_unit")
+        return condition, temperature, unit if isinstance(unit, str) else None
+
+    async def _resolve_weather(
+        self, condition: str | None, temperature: int | None
+    ) -> tuple[str, int]:
+        """Service fields win. Anything missing comes from the daily forecast."""
+        if condition and temperature is not None:
+            try:
+                return map_condition(condition), int(temperature)
+            except WeatherDesignError as err:
+                raise HomeAssistantError(err.message) from err
+        entity_id = self._weather_entity_id()
+        if not entity_id:
+            raise HomeAssistantError(
+                "Choose a weather entity in the HoMedics Drift options (Configure) "
+                "before drawing the forecast"
+            )
+        raw_condition, raw_temperature, unit = await self._daily_forecast(entity_id)
+        try:
+            chosen = map_condition(condition or raw_condition)
+            if temperature is None:
+                high = convert_temperature(
+                    raw_temperature,
+                    unit,
+                    self.config_entry.options.get(CONF_WEATHER_UNIT, "auto"),
+                )
+            else:
+                high = int(temperature)
+        except WeatherDesignError as err:
+            raise HomeAssistantError(err.message) from err
+        return chosen, high
+
+    async def async_draw_weather(
+        self,
+        condition: str | None = None,
+        temperature: int | None = None,
+        *,
+        play: bool = True,
+    ) -> int:
+        """Upload the forecast picture under the fixed name Weather, then play it.
+
+        The same name reuses one library slot. The id is never a stock id, never
+        the protected clean pattern, and never a pattern that is drawing.
+        """
+        self._reject_if_busy()
+        self._draw_active = True
+        self._upload_ticks = UploadTicks()
+        self._set_ai("running", name=WEATHER_NAME)
+        label = WEATHER_NAME
+        try:
+            chosen, high = await self._resolve_weather(condition, temperature)
+            label = f"{chosen}, {high}°"
+            current = self.data.pattern_id if self.data is not None else None
+            drawing = bool(self.data and self.data.drawing)
+            panel_only = temperature_panel_only(
+                condition=chosen,
+                temperature=high,
+                last_condition=self.library.last_weather_condition,
+                last_temperature=self.library.last_weather_temperature,
+                weather_pattern_id=self.library.id_for_upload_name(WEATHER_NAME),
+                current_pattern_id=current,
+                drawing=drawing,
+            )
+            rotation = rotation_degrees(
+                self.config_entry.options.get(CONF_WEATHER_ROTATION, 0)
+            )
+            self._announce("drawing", prompt=label, assistant="the forecast", name=WEATHER_NAME)
+
+            def _render() -> str:
+                return render_weather_thr(chosen, high, rotation, panel_only=panel_only)
+
+            try:
+                thr = await self.hass.async_add_executor_job(_render)
+            except WeatherDesignError as err:
+                raise HomeAssistantError(err.message) from err
+            pattern_id = await self.async_upload_pattern(
+                name=WEATHER_NAME,
+                thr=thr,
+                source="weather",
+                progress=lambda done, total: self._note_upload(done, total, WEATHER_NAME),
+                replace_idle=panel_only,
+            )
+            self.library.last_weather_condition = chosen
+            self.library.last_weather_temperature = high
+            self.library.last_weather_at = time.time()
+            await self._save_library()
+            playing = False
+            if clean_before_ai_drawing(
+                self.config_entry.options.get(CONF_CLEAN_BEFORE_AI, True),
+                play=play,
+                power_on=self.session_on,
+            ):
+                self._announce("cleaning", prompt=label, name=WEATHER_NAME)
+                clean_id = await self._ensure_clean_id()
+                if self.session_on and clean_id != pattern_id:
+                    # Two pattern changes: the wipe, then Weather. Stop after
+                    # pauses when Weather finishes, not when the wipe does.
+                    self.authorize_stop_after(2)
+                    self._clean_follow += 1
+                    token = self._clean_follow
+                    async with self._command_lock:
+                        if self.session_on:
+                            await self.async_send(draw_pattern(clean_id))
+                            self._replace(pattern_id=clean_id, status=1)
+                    if await self._wait_until_clean_done(token, clean_id):
+                        playing = await self._play_if_on(pattern_id, True, grant=False)
+                    else:
+                        self.stop_after.grants = 0
+                else:
+                    playing = await self._play_if_on(pattern_id, True)
+            else:
+                playing = await self._play_if_on(pattern_id, play)
+            detail = "" if playing or not play else "Power is off, so the pattern was saved but not played"
+            self._set_ai("stored", detail=detail, name=WEATHER_NAME, pattern_id=pattern_id)
+            self._announce(
+                "done",
+                name=WEATHER_NAME,
+                playing=playing,
+                prompt=label,
+                assistant="the forecast",
+            )
+            return pattern_id
+        except HomeAssistantError as err:
+            self._set_ai("error", error=str(err), name=WEATHER_NAME)
+            self._announce("error", error=str(err), name=WEATHER_NAME, prompt=label)
+            raise
+        finally:
+            self._draw_active = False
+
     async def async_ai_draw(self, prompt: str, *, name: str | None = None, play: bool = False) -> int:
         """Ask the configured assistant for one path, then upload it."""
         self._reject_if_busy()
@@ -1499,11 +1742,12 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         finally:
             self._draw_active = False
 
-    async def _play_if_on(self, pattern_id: int, play: bool) -> bool:
+    async def _play_if_on(self, pattern_id: int, play: bool, *, grant: bool = True) -> bool:
         """Start the pattern only while Power is already on."""
         if not play or not self.session_on:
             return False
-        self.authorize_stop_after()
+        if grant:
+            self.authorize_stop_after()
         async with self._command_lock:
             if not self.session_on:
                 return False

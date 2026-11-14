@@ -19,6 +19,7 @@ SERVICE_GENERATE = "generate_pattern"
 SERVICE_GALLERY = "add_gallery_design"
 SERVICE_IMPORT = "import_pattern_url"
 SERVICE_FAVORITE = "set_favorite"
+SERVICE_DRAW_WEATHER = "draw_weather"
 
 _UPLOAD_SCHEMA = vol.Schema(
     {
@@ -58,6 +59,14 @@ _FAVORITE_SCHEMA = vol.Schema(
     {
         vol.Required("name"): cv.string,
         vol.Optional("favorite", default=True): cv.boolean,
+    },
+    extra=vol.ALLOW_EXTRA,
+)
+_WEATHER_SCHEMA = vol.Schema(
+    {
+        vol.Optional("condition"): vol.In(["sunny", "cloudy", "rain", "snow"]),
+        vol.Optional("temperature"): vol.All(vol.Coerce(int), vol.Range(min=-99, max=199)),
+        vol.Optional("play", default=True): cv.boolean,
     },
     extra=vol.ALLOW_EXTRA,
 )
@@ -153,6 +162,14 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         coordinator = await _coordinator(hass, call)
         await coordinator.async_set_favorite(call.data["name"], bool(call.data.get("favorite", True)))
 
+    async def _draw_weather(call: ServiceCall) -> None:
+        coordinator = await _coordinator(hass, call)
+        await coordinator.async_draw_weather(
+            call.data.get("condition"),
+            call.data.get("temperature"),
+            play=bool(call.data.get("play", True)),
+        )
+
     hass.services.async_register(DOMAIN, SERVICE_GALLERY, _gallery, schema=_GALLERY_SCHEMA)
     hass.services.async_register(
         DOMAIN,
@@ -162,6 +179,9 @@ async def async_setup_services(hass: HomeAssistant) -> None:
         supports_response=SupportsResponse.OPTIONAL,
     )
     hass.services.async_register(DOMAIN, SERVICE_FAVORITE, _favorite, schema=_FAVORITE_SCHEMA)
+    hass.services.async_register(
+        DOMAIN, SERVICE_DRAW_WEATHER, _draw_weather, schema=_WEATHER_SCHEMA
+    )
 
 
 async def _coordinator(hass: HomeAssistant, call: ServiceCall) -> DriftCoordinator:

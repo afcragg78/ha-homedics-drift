@@ -579,7 +579,13 @@ class StopAfterWatch:
         self.pausing = False
 
     def authorize(self, pattern_changes: int = 1) -> None:
-        """Let the user start a design. ``pattern_changes`` covers a wipe then the design."""
+        """Let the next designs start.
+
+        ``pattern_changes`` is 2 for a wipe and then the design. Each pattern
+        change spends one grant. A grant that is still left also keeps the end
+        of the current design from pausing, so the wipe can finish and the next
+        design can start. The pause comes when the last of those designs ends.
+        """
         self.grants += max(1, pattern_changes)
         self.allow_finish = True
         self.pausing = False
@@ -620,6 +626,8 @@ class StopAfterWatch:
                 self.allow_finish = False
             return False
         if progress >= 0.999 and not self.pausing:
+            if self.grants > 0:
+                return False
             self.pausing = True
             return True
         return False

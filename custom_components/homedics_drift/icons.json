@@ -70,6 +70,9 @@
       "draw_with_ai": {
         "default": "mdi:draw"
       },
+      "draw_weather": {
+        "default": "mdi:weather-partly-cloudy"
+      },
       "send_gallery": {
         "default": "mdi:send"
       },
@@ -99,6 +102,9 @@
       },
       "clean_before": {
         "default": "mdi:broom"
+      },
+      "auto_weather": {
+        "default": "mdi:weather-partly-cloudy"
       },
       "favorite": {
         "default": "mdi:heart"

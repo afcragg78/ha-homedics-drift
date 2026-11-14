@@ -23,6 +23,13 @@ The card shows the sand, the pattern name, progress, Power, previous, play or pa
 
 If a button cannot run, the card says so in a sentence. It does not show a stack trace, and it never calls a service without an entity or a device.
 
+## Features you need to turn on
+
+Two features do nothing until you set them up. Neither one needs YAML.
+
+- [Weather drawing](#weather-drawing) puts today's forecast on the sand.
+- [AI drawing](#ai-drawing) turns a short prompt into a pattern.
+
 ### The card still looks like an old version
 
 On the Home Assistant companion app: **Settings → Companion app → Debugging → Reset frontend cache**, then reopen the dashboard. In a browser, reload the page. The card is served as `drift-table-card.js?v=5`, so a cached copy is the usual cause.
@@ -39,6 +46,8 @@ On the Home Assistant companion app: **Settings → Companion app → Debugging 
 All credit for the protocol goes to Josh Lannin's [Drifted](https://github.com/joshlannin/drifted) project. Drifted reverse-engineered how these Bluetooth sand tables speak, tested a generation-1 16" table, and published the handshake, packet format, failure modes, and the vectors in `spec/vectors/protocol.json`. Drifted is MIT licensed, copyright Altimix LLC.
 
 The **Sisyphus Classics** gallery tracks are converted from Bruce Shapiro's [sisyphus](https://github.com/Dithermaster/sisyphus) repository, MIT licensed, Copyright (c) 2018 Dithermaster. The license is in `custom_components/homedics_drift/sisyphus/LICENSE`.
+
+The weather picture (sun, clouds, rain, snow, and the temperature digits) is Josh Lannin's Drifted design [`designs/weather.py`](https://github.com/joshlannin/drifted/blob/main/designs/weather.py), MIT licensed, Copyright (c) 2026 Altimix LLC. It is vendored as `custom_components/homedics_drift/weather_design.py`. See [NOTICE](NOTICE).
 
 This Home Assistant integration was converted from Drifted using Grok Bot.
 
@@ -113,7 +122,9 @@ One device per table. Entity names are prefixed with the table's Bluetooth name.
 | --- | --- |
 | `light` Light | Off is brightness 0 (`0x14/7`) and stays off. On restores the last colour the way Drifted does (`0x14/15` with the enable byte, `0x14/13` `Temp`, `0x11/4` at the last non-zero brightness or 100) and then sends that same non-zero brightness with `0x14/7`, which is what relights the LEDs. |
 | `switch` Power | An integration switch, remembered across restarts. The table has no real power-off: `0x14/16` with 0 only pauses, and the `powerOn` flag stays on, so the switch does not follow that flag. Off pauses a moving ball and turns the lamp off, remembering the colour and brightness. On restores that lamp and resumes play. Play, pause, next, and previous never move this switch. |
-| `switch` Stop after this design | Remembered across restarts. When on, a finished design is paused so the sand stays still. Power is not turned off and the lamp is left on. Another design starts only when you pick one, send one, or press play. |
+| `switch` Stop after this design | Remembered across restarts. When on, a finished design is paused so the sand stays still. Power is not turned off and the lamp is left on. Another design starts only when you pick one, send one, or press play. With Auto Weather on, the pause happens after the weather picture, not after the wipe that comes first. |
+| `switch` Auto Weather | Off until you turn it on. Home Assistant remembers it. The first time the switch exists, **Auto Weather starts on** in Configure is the starting value, and that defaults to off. When on, a finished design is followed by the forecast. |
+| `button` Draw Weather | Draws the forecast now. It plays only while Power is on. |
 | `media_player` Player | Available whenever the table is connected. While Power is off it stays off and offers no play, pause, next, previous, or source button. While Power is on it shows playing or paused, with those transport buttons and no power button of its own. |
 | `number` Speed | 0–100%. The table's raw speed byte runs from 30 to 75 (`30 + percent/100 × 45`). 0% is raw 30 and 100% is raw 75, which is what the HoMedics app calls full speed. |
 | `select` Playlist | Every playlist the table itself sends during the session dump (`0x30`, actions 1–4), refreshed on each connection. A human name in the packet is shown. Numeric ids, including the app's millisecond timestamps, stay behind the command and are labeled `Playlist N`. Choosing one sends draw-from-playlist (`0x14/2`) with that id and the first pattern id in the list, or pattern 0 when the table did not include pattern ids. Nothing is hardcoded. Ignored while soft power is off. |
@@ -177,7 +188,7 @@ data:
 
 `type` is `spiral`, `rose`, `star`, `wave`, or `spirograph`. Spiral takes `turns` (1–40). Star takes `points` (3–12). Wave takes `waves`. Spirograph takes `outer`, `inner`, `pen`, and `loops`. `play: true` starts it only while Power is on. If Power is off the pattern is still saved, and it is not played.
 
-**A prompt** uses the assistant you already set up in Home Assistant. This integration does not store an API key. Open the integration options and pick an AI Task from the dropdown. Each row shows the assistant's name and its entity id. If you leave it empty, Home Assistant's preferred AI Task is used, or the first AI Task that is online. If none of those exist, an extra conversation agent is used. The built-in Home Assistant agent cannot draw. Each drawing is a single request. If nothing can draw, **Draw with AI** stays unavailable and the error says so. When Power is on, an AI drawing wipes the sand first and then plays. That does not follow the **Clean before pattern** switch. Turn off **Clean before AI drawings** in the integration options if you do not want the wipe. The notification says `Cleaning sand…` during that step.
+**A prompt** uses the assistant you already set up in Home Assistant. The steps to turn that on are in [AI drawing](#ai-drawing). This integration does not store an API key. Open the integration options and pick an AI Task from the dropdown. Each row shows the assistant's name and its entity id. If you leave it empty, Home Assistant's preferred AI Task is used, or the first AI Task that is online. If none of those exist, an extra conversation agent is used. The built-in Home Assistant agent cannot draw. Each drawing is a single request. If nothing can draw, **Draw with AI** stays unavailable and the error says so. When Power is on, an AI drawing wipes the sand first and then plays. That does not follow the **Clean before pattern** switch. Turn off **Clean before AI drawings** in the integration options if you do not want the wipe. The notification says `Cleaning sand…` during that step. Weather drawings use that same wipe.
 
 Type the prompt in the **AI prompt** text box, then press **Draw with AI**. Or call the service:
 
@@ -205,6 +216,74 @@ actions:
 ```
 
 `trigger.event.data.stage` is `drawing`, `uploading`, `done`, or `error`. `trigger.event.data.progress` is the percent while uploading.
+
+## Weather drawing
+
+The picture is a sun, two clouds, rain, or snow, with the forecast high in big digits. It is Josh Lannin's weather design from [Drifted](https://github.com/joshlannin/drifted/blob/main/designs/weather.py) (MIT, Copyright (c) 2026 Altimix LLC), vendored as `custom_components/homedics_drift/weather_design.py`.
+
+1. Open **Settings → Devices & services → HoMedics Drift → Configure**.
+2. **Weather entity**: pick any Home Assistant weather entity. National Weather Service, Met.no, OpenWeatherMap, and any other weather integration all work. The integration calls `weather.get_forecasts` with `type: daily` and uses the first day: its condition, and its high (`temperature`, not the overnight low).
+3. **Temperature unit**: Auto uses that entity's unit (`°F` or `°C`). Choose F or C when you want the digits in the other unit. The high is converted only when the entity's unit and your choice differ.
+4. **Rotation** is 0–359 degrees counter-clockwise. 0 matches the design as published. Turn it if the top of the table is not the far edge.
+5. **Auto Weather starts on** is only the first value of the **Auto Weather** switch. The switch starts off unless this is on before the switch has ever been saved. After that, the switch is the control, and Home Assistant remembers it.
+6. **Weather cooldown** is how long Auto Weather waits before it draws again. The default is 30 minutes.
+
+On the table's device page, **Draw Weather** and **Auto Weather** sit with the other buttons and switches. Add those entities to a dashboard card if you want them next to the rest of your controls.
+
+**Auto Weather** (default off) draws the forecast after a design finishes. The table already pushes status about twice a second. Nothing is polled. A design counts as finished when its progress has reached about 100% and the pattern then changes, or when drawing goes from on to off at 99% or more. It does not run when Power is off, while a drawing is already being uploaded, when the design that finished is the Weather pattern or the clean pattern, or until the cooldown has passed. The time of the last weather drawing is saved with the pattern library on this Home Assistant machine.
+
+**Stop after this design** can stay on. The finished design pauses, the sand is wiped, the weather picture plays, and that picture pauses when it reaches the end. The wipe does not pause in the middle.
+
+**Draw Weather** draws the forecast now. It plays only while Power is on. If Power is off, the pattern is saved and not played.
+
+Or call the service. Leave condition and temperature out to use the forecast:
+
+```yaml
+action: homedics_drift.draw_weather
+data:
+  play: true
+```
+
+Or name them. `condition` is `sunny`, `cloudy`, `rain`, or `snow`. `temperature` is an integer from -99 to 199. `play` defaults to true, and it still plays only while Power is on.
+
+```yaml
+action: homedics_drift.draw_weather
+data:
+  condition: rain
+  temperature: 48
+  play: true
+```
+
+Forecast conditions are grouped: sunny and clear-night draw the sun; partlycloudy, cloudy, fog, windy, windy-variant, and exceptional draw the clouds; rainy, pouring, lightning, lightning-rainy, and hail draw the rain; snowy and snowy-rainy draw the snow.
+
+The pattern is always stored under the name **Weather**, in the same slot each time. The id is 50000 or above. It will not replace a pattern that came with the table, the protected clean pattern, or a pattern that is drawing. If only the high changed and Weather is still the pattern on the sand, and the ball is idle, just the temperature digits are redrawn.
+
+**Clean before AI drawings** (on by default, in the same Configure screen) wipes the sand before the weather picture when Power is on and the drawing is going to play. Turn that option off to skip the wipe. It is not the **Clean before pattern** switch. The notification says `Cleaning sand…` during the wipe, then the usual uploading and done notices.
+
+If no weather entity is chosen, and the service does not include both a condition and a temperature, the error asks you to choose one in Configure.
+
+## AI drawing
+
+This integration does not store an API key. It asks an assistant you already added to Home Assistant, once, for a list of points.
+
+1. Add an AI integration, such as OpenAI or Google, so Home Assistant has an **AI Task** entity. The built-in Home Assistant conversation agent cannot draw.
+2. Open **Settings → Devices & services → HoMedics Drift → Configure**.
+3. **AI Task entity**: pick one from the list. Each row is the assistant's name and its entity id. Leave it empty to use Home Assistant's preferred AI Task, or the first AI Task that is not unavailable. If there is no AI Task, a conversation agent other than the built-in one is used. Pick that under **Conversation agent** if you have one. If nothing can draw, **Draw with AI** stays unavailable and the error says to add an AI integration and pick it here.
+4. **Clean before AI drawings** defaults to on. When it is on, an AI drawing wipes the sand and then plays, but only while Power is on and you asked it to play. This does not follow the **Clean before pattern** switch. Turn it off to skip the wipe. The notification says `Cleaning sand…` during that step.
+
+Type the prompt in the **AI prompt** text box, then press **Draw with AI**. Or call:
+
+```yaml
+action: homedics_drift.ai_draw
+data:
+  prompt: a five pointed star
+  name: Star
+  play: true
+```
+
+`play: true` starts it only while Power is on. If Power is off, the pattern is still saved and it is not played. One model call has to return a list of `[x, y]` points inside a circle. Those points are resampled, kept inside the disc, started at the centre, finished on the rim, and uploaded with the same rules as any other pattern: an id at or above 50000, never a pattern that shipped with the table, never the pattern that is drawing, and never the protected clean pattern. **AI drawing** shows `running` while the request is in flight, a percentage while the pattern uploads, and `stored` when the table has accepted it. A second request while one is running is refused, and a notice says a drawing is already in progress.
+
+`homedics_drift.generate_pattern` draws a spiral, rose, star, wave, or spirograph with no assistant. See [Drawing without the phone app](#drawing-without-the-phone-app).
 
 ## Gallery
 

@@ -179,6 +179,33 @@ import_pattern_url:
       selector:
         text:
 
+draw_weather:
+  fields:
+    device_id:
+      selector:
+        device:
+          integration: homedics_drift
+    condition:
+      example: sunny
+      selector:
+        select:
+          options:
+            - sunny
+            - cloudy
+            - rain
+            - snow
+    temperature:
+      example: 72
+      selector:
+        number:
+          min: -99
+          max: 199
+          mode: box
+    play:
+      default: true
+      selector:
+        boolean:
+
 set_favorite:
   fields:
     device_id:
