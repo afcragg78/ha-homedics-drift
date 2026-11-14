@@ -1034,6 +1034,7 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         source: str = "",
         progress: Any = None,
         replace_idle: bool = False,
+        preview_rotation: float = 0,
     ) -> int:
         """Store a new pattern. Success is only the table's stored message."""
         cleaned = name.strip()
@@ -1083,7 +1084,9 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
             await self._transfer(pattern_id, pages, progress=progress)
             preview = self._preview_path(pattern_id)
             try:
-                png = await self.hass.async_add_executor_job(render_thr, text)
+                png = await self.hass.async_add_executor_job(
+                    lambda: render_thr(text, view_rotation=preview_rotation)
+                )
 
                 def _write() -> None:
                     preview.parent.mkdir(parents=True, exist_ok=True)
@@ -1705,6 +1708,7 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
                 source="weather",
                 progress=lambda done, total: self._note_upload(done, total, WEATHER_NAME),
                 replace_idle=panel_only,
+                preview_rotation=rotation,
             )
             self.library.last_weather_condition = chosen
             self.library.last_weather_temperature = high

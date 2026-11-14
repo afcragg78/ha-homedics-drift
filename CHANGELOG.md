@@ -2,7 +2,8 @@
 
 ## 1.4.2
 
-- The wind picture is one centered emblem: four long, gently curved lines that start close together on the left and fan out, each ending in an open round curl. Plain horizontal lines flow around it. A windy day beside another symbol uses the same emblem, smaller, on the right.
+- Wind is four long wavy lines under the temperature, evenly spaced, each ending in a large round curl. The upper curls roll up and the bottom curl rolls down. A combined picture keeps the symbol on the left and puts three curled gusts on the right.
+- The pattern preview on the card is turned by the same weather rotation that is sent to the table, so the card matches the sand.
 
 ## 1.4.1
 

@@ -41,6 +41,7 @@ PICTURES = (
 
 # Forecast pictures that also carry a gust when the wind is over the threshold.
 _WIND_COMBOS = (
+    "sunny_wind",
     "rain_wind",
     "heavy_rain_wind",
     "thunderstorm_wind",
@@ -90,6 +91,7 @@ _CONDITION_MAP = {
     "hot-wind": "hot_wind",
     "cold-wind": "cold_wind",
     "alert-wind": "alert_wind",
+    "sunny-wind": "sunny_wind",
 }
 
 

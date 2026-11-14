@@ -34,7 +34,7 @@
     thunderstorm  a cloud, a bold lightning bolt, and a few slanted rain lines
     snow          a big snowflake and two small ones, in gently drifting lines
     clear_night   a crescent moon and a few small stars
-    windy         one centered emblem of four tapered lines, each ending in an open round curl
+    windy         four long wavy lines under the temperature, each ending in a round curl
 
 Sun, clouds, rain, snow, and the temperature digits are Josh Lannin's. The other
 five pictures use the same construction.
@@ -908,166 +908,75 @@ def _gust(side, y, x_end, bow, curl=0.0, curl_up=True, kind="bow"):
     return body + hooked[1:]
 
 
-def _gentle_s(p0, p1, bow):
-    """A gentle S. Endpoints stay put, and the middle bows by `bow`."""
-    dist = math.hypot(p1[0] - p0[0], p1[1] - p0[1]) or 0.01
-    n = max(6, int(dist / STEP))
-    pts = []
-    for i in range(n + 1):
-        t = i / n
-        # Zero slope in the extra bow at both ends, so the hook joins smoothly.
-        bend = bow * math.sin(math.pi * t) ** 2 * math.sin(2 * math.pi * t)
-        pts.append((
-            p0[0] + (p1[0] - p0[0]) * t,
-            p0[1] + (p1[1] - p0[1]) * t + bend,
-        ))
-    return pts
-
-
-def _hook(attach, radius, up):
-    """An open round hook, three quarters of a circle, constant radius.
-
-    The line arrives going right. A top hook turns counter-clockwise up and
-    back to the left. A bottom hook is the mirror, turning down.
-    """
-    if up:
-        center = (attach[0], attach[1] + radius)
-        a0, delta = -math.pi / 2, 1.5 * math.pi
-    else:
-        center = (attach[0], attach[1] - radius)
-        a0, delta = math.pi / 2, -1.5 * math.pi
-    n = max(16, int(abs(delta) * radius / STEP))
-    return [polar(center, radius, a0 + delta * i / n) for i in range(n + 1)]
-
-
-# One emblem, in its own coordinates: left starts close together, fanning to the right.
-# (x0, y0, x1, y1, radius, up, bow)
-_WIND_LINES = (
-    # x0, y0, x1, y1, radius, up, bow. Origin is the emblem center.
-    # Starts sit in one small bundle, only slightly staggered. Length shows up on the right.
-    (-0.56, 0.018, 0.02, 0.05, 0.046, True, 0.016),     # 1 top-inner, medium curl up
-    (-0.64, 0.042, 0.48, 0.21, 0.100, True, 0.030),     # 2 top, longest, large curl up
-    (-0.62, -0.042, 0.48, -0.21, 0.100, False, -0.030), # 3 bottom, long, large curl down
-    (-0.54, -0.018, 0.02, -0.05, 0.046, False, -0.016), # 4 bottom-inner, medium curl down
-)
-
-
-def _wind_line(spec, scale, origin):
-    x0, y0, x1, y1, radius, up, bow = spec
-    start = (origin[0] + x0 * scale, origin[1] + y0 * scale)
-    attach = (origin[0] + x1 * scale, origin[1] + y1 * scale)
-    body = _gentle_s(start, attach, bow * scale)
-    hook = _hook(attach, radius * scale, up)
-    return body + hook[1:]
-
-
-def wind_emblem(scale=1.0, origin=(0.0, -0.42)):
-    """Four tapered wind lines. Each is drawn out to the hook and back to its left start.
-
-    The next line is picked up in that same left bundle, so nothing else joins them.
-    """
-    # Draw long-top, short-top, short-bottom, long-bottom so each hop stays inside the bundle.
-    lines = [_wind_line(spec, scale, origin) for spec in _WIND_LINES]
-    path = []
-    for index in (1, 0, 3, 2):
-        stroke = _retrace(lines[index])
-        if path and math.dist(path[-1], stroke[0]) > 1e-6:
-            path += line(path[-1], stroke[0])[1:]
-        path += stroke
-    return path
-
-
-def _radial_rim(point):
-    """The table-edge point in the same direction as `point`."""
-    radius = math.hypot(*point) or 1.0
-    return (point[0] / radius * RIM, point[1] / radius * RIM)
-
-
-def _flow_margin(path, emblem):
-    """Horizontal lines that stop short of the emblem. The pen is already on the rim."""
-    pad = 0.07
-    x_lo = min(p[0] for p in emblem) - pad
-    x_hi = max(p[0] for p in emblem) + pad
-    y_lo = min(p[1] for p in emblem) - pad
-    y_hi = max(p[1] for p in emblem) + pad
-    for y in (i / 100 for i in range(-90, 10, 9)):
-        if y >= PANEL_Y - 0.03 or abs(y) > RIM - 0.05:
-            continue
-        half = math.sqrt(max(0.0, RIM * RIM - y * y))
-        if y > y_hi or y < y_lo:
-            spans = [(-half, half)]
-        else:
-            spans = []
-            if x_lo > -half + 0.1:
-                spans.append((-half, min(x_lo, half)))
-            if x_hi < half - 0.1:
-                spans.append((max(x_hi, -half), half))
-        for x0, x1 in spans:
-            if x1 - x0 < 0.1:
-                continue
-            start = _on_rim(y, -1 if abs(x0 + half) < abs(x1 - half) else 1)
-            stop = (x1, y) if abs(start[0] - x0) < abs(start[0] - x1) else (x0, y)
-            stroke = _retrace(_resample([start, stop]))
-            path += rim_arc(path[-1], start)
-            path += stroke
-    return path
+def _wave(x0, x1, y, amp, curl, up):
+    """A long S, then a round spiral curl of about one and a quarter turns."""
+    body = _s_curve(x0, x1, y, amp)
+    return body[:-1] + _open_curl(body[-1], curl, 1.25, up)
 
 
 def wind_gusts():
-    """The centered wind emblem, with plain flow lines stopping around it."""
-    origin = (0.0, -0.36)
-    lines = [_wind_line(spec, 1.0, origin) for spec in _WIND_LINES]
-    path = wind_emblem(1.0, origin)
-    # Step across the left bundle to the long bottom line and follow it out,
-    # then a short step to the rim. Flow lines continue from there.
-    bottom = lines[2]
-    if math.dist(path[-1], bottom[0]) > 1e-6:
-        path += line(path[-1], bottom[0])[1:]
-    outer = max(bottom, key=lambda p: math.hypot(*p))
-    k = max(range(len(bottom)), key=lambda i: math.hypot(*bottom[i]))
-    path += bottom[: k + 1][1:]
-    path += line(path[-1], _radial_rim(outer))[1:]
-    return _flow_margin(path, [p for line in lines for p in line])
+    """Four long wavy lines across the area under the temperature.
+
+    They leave the left edge, stay roughly parallel, and each ends in a large
+    round curl. The upper curls roll up; the bottom curl rolls down. Nothing
+    is drawn at the centre.
+    """
+    path = []
+    # y, wave amplitude, curl radius, curl upward.
+    rows = (
+        (-0.08, 0.055, 0.09, True),
+        (-0.30, 0.05, 0.085, True),
+        (-0.52, 0.048, 0.08, True),
+        (-0.68, 0.04, 0.075, False),
+    )
+    for y, amp, curl, up in rows:
+        start = _on_rim(y, -1)[0]
+        room = _on_rim(y, 1)[0] - curl - 0.08
+        stroke = _retrace(_wave(start, min(0.46, room), y, amp, curl, up))
+        # A second trip over the same groove. It adds no new line.
+        stroke = stroke + stroke[1:]
+        if path:
+            path += rim_arc(path[-1], stroke[0])
+        path += stroke
+    return path
 
 
-def _fit_origin(scale, origin_y, limit=0.90):
-    """Shift the emblem right until its furthest point sits just inside `limit`."""
-    lo, hi = -0.2, 0.85
-    for _ in range(18):
-        mid = (lo + hi) / 2
-        rho = max(
-            math.hypot(*p)
-            for spec in _WIND_LINES
-            for p in _wind_line(spec, scale, (mid, origin_y))
-        )
-        if rho > limit:
-            hi = mid
-        else:
-            lo = mid
-    return (lo, origin_y)
+def _draw_from_rim(path, pts):
+    """Draw a gust that sits inside the table, starting and ending on the right rim."""
+    index = max(range(len(pts)), key=lambda i: pts[i][0])
+    outer = pts[index]
+    rim = _on_rim(outer[1], 1)
+    stroke = _resample(
+        [rim]
+        + pts[index:]
+        + pts[::-1][1:]
+        + pts[: index + 1][1:]
+        + [rim]
+    )
+    if path:
+        path += rim_arc(path[-1], stroke[0])
+    path += stroke
+    return path
 
 
 def _side_gusts():
-    """The same four lines, smaller, on the right. The path starts and ends on the rim."""
-    scale = 0.42
-    origin = _fit_origin(scale, -0.48, limit=0.91)
-    lines = [_wind_line(spec, scale, origin) for spec in _WIND_LINES]
-    bottom = lines[2]
-    # The long bottom curl is the part nearest the rim. Enter and leave on it.
-    k = max(range(len(bottom)), key=lambda i: math.hypot(*bottom[i]))
-    outer = bottom[k]
-    path = line(_radial_rim(outer), outer)
-    path += bottom[k:][1:]
-    path += bottom[::-1][1:]
-    for index in (0, 1, 3):
-        stroke = _retrace(lines[index])
-        if math.dist(path[-1], stroke[0]) > 1e-6:
-            path += line(path[-1], stroke[0])[1:]
-        path += stroke
-    if math.dist(path[-1], bottom[0]) > 1e-6:
-        path += line(path[-1], bottom[0])[1:]
-    path += bottom[: k + 1][1:]
-    path += line(path[-1], _radial_rim(outer))[1:]
+    """Three wavy gusts on the right of a combined picture. No divider."""
+    path = []
+    # Top rolls up, middle rolls down, bottom curl is smaller.
+    rows = (
+        (-0.18, 0.045, 0.08, True),
+        (-0.42, 0.04, 0.075, False),
+        (-0.64, 0.035, 0.05, False),
+    )
+    for y, amp, curl, up in rows:
+        rim_x = _on_rim(y, 1)[0]
+        pts = _wave(0.08, rim_x - curl - 0.12, y, amp, curl, up)
+        # Slide the curl out until it nearly touches the rim, so the return
+        # to the edge is shorter than the groove and does not read as a stroke.
+        outer = max(pts, key=lambda p: p[0])
+        shift = _on_rim(outer[1], 1)[0] - outer[0] - 0.012
+        pts = [(p[0] + shift, p[1]) for p in pts]
+        path = _draw_from_rim(path, pts)
     return path
 
 
@@ -1096,6 +1005,9 @@ def _park(y, reach):
 
 def _emblem(name):
     """The day's symbol on the left. The path ends on the left rim, so gusts join along the edge."""
+    if name == "sunny":
+        day = sun((-0.36, -0.42), r_in=0.12, r_out=0.30, rays=12, disc=0.11)
+        return _draw_shapes([day], leave=(day.c[0] - 1.4, day.c[1]))
     if name == "hot":
         bulb_r, bulb_y = 0.15, -0.56
         return _thermometer(

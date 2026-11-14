@@ -11,17 +11,25 @@ import io
 import math
 
 
-def render_thr(text: str, size: int = 256) -> bytes:
+def render_thr(text: str, size: int = 256, *, view_rotation: float = 0) -> bytes:
     """Preview the same points that will be uploaded.
 
     The groove follows linear theta-rho motion, which is how the ball moves.
+    ``view_rotation`` is the weather rotation in degrees counter-clockwise, the
+    same value baked into the file. The card is turned back by that angle so
+    it shows the picture the way it sits on the table.
     """
     from .patterns import parse_thr
 
-    return render_preview(parse_thr(text), size=size)
+    return render_preview(parse_thr(text), size=size, view_rotation=view_rotation)
 
 
-def render_preview(points: list[tuple[float, float]], size: int = 256) -> bytes:
+def render_preview(
+    points: list[tuple[float, float]],
+    size: int = 256,
+    *,
+    view_rotation: float = 0,
+) -> bytes:
     """Draw polar points as grooves in tan sand. Returns a PNG.
 
     Samples are filled in by linear steps in theta and rho before the groove
@@ -93,6 +101,12 @@ def render_preview(points: list[tuple[float, float]], size: int = 256) -> bytes:
         outline=(120, 86, 58),
         width=max(1, size // 80),
     )
+    if view_rotation % 360:
+        sand = sand.rotate(
+            -float(view_rotation),
+            resample=Image.Resampling.BICUBIC,
+            fillcolor=(28, 24, 22),
+        )
     buffer = io.BytesIO()
     sand.save(buffer, format="PNG")
     return buffer.getvalue()
