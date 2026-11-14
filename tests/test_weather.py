@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
 
 import pytest
 
@@ -20,6 +21,7 @@ from custom_components.homedics_drift.weather import (
     convert_temperature,
     forecast_high,
     initial_auto_weather,
+    PICTURES,
     map_condition,
     render_weather_thr,
     rotate_xy,
@@ -34,26 +36,30 @@ from custom_components.homedics_drift.weather_design import build
     ("condition", "picture"),
     [
         ("sunny", "sunny"),
-        ("clear-night", "sunny"),
-        ("partlycloudy", "cloudy"),
+        ("clear-night", "clear_night"),
+        ("clear_night", "clear_night"),
+        ("partlycloudy", "partlycloudy"),
+        ("partly-cloudy", "partlycloudy"),
         ("cloudy", "cloudy"),
-        ("fog", "cloudy"),
-        ("windy", "cloudy"),
-        ("windy-variant", "cloudy"),
+        ("fog", "fog"),
+        ("windy", "windy"),
+        ("windy-variant", "windy"),
         ("exceptional", "cloudy"),
         ("rainy", "rain"),
         ("pouring", "rain"),
-        ("lightning", "rain"),
-        ("lightning-rainy", "rain"),
+        ("lightning", "thunderstorm"),
+        ("lightning-rainy", "thunderstorm"),
         ("hail", "rain"),
         ("snowy", "snow"),
         ("snowy-rainy", "snow"),
         ("Sunny", "sunny"),
         ("rain", "rain"),
         ("snow", "snow"),
+        ("thunderstorm", "thunderstorm"),
+        ("Thunderstorm", "thunderstorm"),
     ],
 )
-def test_forecast_conditions_use_four_pictures(condition: str, picture: str) -> None:
+def test_forecast_conditions_map_to_pictures(condition: str, picture: str) -> None:
     assert map_condition(condition) == picture
 
 
@@ -112,11 +118,46 @@ def test_rotation_is_counter_clockwise_and_zero_matches_the_txt_writer() -> None
     assert wire_point(*polar)[0] * 6 == writer
 
 
-@pytest.mark.parametrize("condition", ["sunny", "cloudy", "rain", "snow"])
+def test_theta_is_unwrapped_across_the_negative_x_axis() -> None:
+    """A short arc past the branch cut must not become a full orbit."""
+    points = [
+        (0.8 * math.cos(theta), 0.8 * math.sin(theta))
+        for theta in (math.pi - 0.3 + 0.6 * index / 20 for index in range(21))
+    ]
+    text = xy_to_thr(points)
+    thetas = [theta for theta, _rho in parse_thr(text)]
+    assert all(abs(b - a) < math.pi for a, b in zip(thetas, thetas[1:]))
+    assert thetas[-1] == pytest.approx(math.pi + 0.3)
+    assert len(thr_to_wire(text)) < 200
+
+
+def test_draw_weather_lists_every_picture() -> None:
+    text = (
+        Path(__file__).resolve().parents[1]
+        / "custom_components"
+        / "homedics_drift"
+        / "services.yaml"
+    ).read_text()
+    block = text.split("draw_weather:", 1)[1].split("draw_photo:", 1)[0]
+    for name in PICTURES:
+        assert f"- {name}\n" in block
+
+
+@pytest.mark.parametrize("condition", PICTURES)
 def test_each_picture_fits_on_the_table(condition: str) -> None:
-    text = render_weather_thr(condition, 72, 0, panel_only=False)
+    text = render_weather_thr(condition, 55, 0, panel_only=False)
+    parsed = parse_thr(text)
+    thetas = [theta for theta, _rho in parsed]
+    assert all(abs(b - a) < math.pi for a, b in zip(thetas, thetas[1:]))
     wire = thr_to_wire(text)
     assert 10_000 < len(wire) < MAX_POINTS
+    length = 0.0
+    previous = parsed[0]
+    for theta, rho in parsed[1:]:
+        prev_theta, prev_rho = previous
+        length += math.hypot(rho - prev_rho, (theta - prev_theta) * max(rho, prev_rho))
+        previous = (theta, rho)
+    assert length / 0.115 / 60 < 17
 
 
 def test_temperature_panel_is_shorter_than_the_whole_picture() -> None:

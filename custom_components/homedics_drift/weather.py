@@ -20,22 +20,36 @@ DEFAULT_WEATHER_ROTATION = 0
 DEFAULT_WEATHER_AFTER_PATTERN = False
 DEFAULT_WEATHER_COOLDOWN_MIN = 30
 
-# Home Assistant weather conditions, grouped the way the four pictures read.
+# Picture names the draw_weather service accepts, in the order the selector shows.
+PICTURES = (
+    "sunny",
+    "partlycloudy",
+    "cloudy",
+    "fog",
+    "rain",
+    "thunderstorm",
+    "snow",
+    "clear_night",
+    "windy",
+)
+
+# Home Assistant weather conditions, and the picture each one draws.
 _CONDITION_MAP = {
     "sunny": "sunny",
-    "clear-night": "sunny",
-    "partlycloudy": "cloudy",
+    "clear-night": "clear_night",
+    "partlycloudy": "partlycloudy",
     "cloudy": "cloudy",
-    "fog": "cloudy",
-    "windy": "cloudy",
-    "windy-variant": "cloudy",
+    "fog": "fog",
+    "windy": "windy",
+    "windy-variant": "windy",
     "exceptional": "cloudy",
     "rainy": "rain",
     "pouring": "rain",
-    "lightning": "rain",
-    "lightning-rainy": "rain",
+    "lightning": "thunderstorm",
+    "lightning-rainy": "thunderstorm",
     "hail": "rain",
     "rain": "rain",
+    "thunderstorm": "thunderstorm",
     "snowy": "snow",
     "snowy-rainy": "snow",
     "snow": "snow",
@@ -51,7 +65,7 @@ class WeatherDesignError(Exception):
 
 
 def map_condition(condition: str) -> str:
-    """One of sunny, cloudy, rain, or snow."""
+    """The picture name for a Home Assistant forecast condition."""
     key = condition.strip().lower().replace("_", "-")
     if key == "partly-cloudy":
         key = "partlycloudy"
@@ -133,13 +147,23 @@ def rotate_xy(points: list[tuple[float, float]], degrees: float) -> list[tuple[f
 def xy_to_thr(points: list[tuple[float, float]]) -> str:
     """Cartesian points to a Sandify ``.thr`` document.
 
-    Theta is ``atan2(y, x)`` in radians. Rho is the distance from the centre,
+    Theta starts as ``atan2(y, x)``. Each later point is unwrapped against the
+    previous theta so the step stays within π. The table interpolates linearly
+    in theta and rho, and a raw 2π jump where the path crosses the negative
+    x-axis would be drawn as a full orbit. Rho is the distance from the centre,
     clamped to 0..1. ``patterns.wire_point`` then uses the same millidegrees as
     Drifted's ``.txt`` writer, so a rotation of 0 matches that layout.
     """
     lines: list[str] = []
+    previous: float | None = None
     for x, y in points:
         theta = math.atan2(y, x)
+        if previous is not None:
+            while theta - previous > math.pi:
+                theta -= 2 * math.pi
+            while theta - previous < -math.pi:
+                theta += 2 * math.pi
+        previous = theta
         rho = min(1.0, max(0.0, math.hypot(x, y)))
         lines.append(f"{theta:.6f} {rho:.6f}")
     return "\n".join(lines) + "\n"

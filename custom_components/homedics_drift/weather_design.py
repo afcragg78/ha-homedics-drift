@@ -26,10 +26,18 @@
 
 """Weather: an emblem for the day's conditions, under the forecast high in big digits.
 
-    sunny   a sun with pointed rays; ripples spread from it across the table
-    cloudy  two clouds floating in drifting wind lines
-    rain    a cloud and raindrops, left smooth in slanting rain
-    snow    a big snowflake and two small ones, in gently drifting lines
+    sunny         a sun with pointed rays; ripples spread from it across the table
+    partlycloudy  that sun with some rays behind a cloud
+    cloudy        two clouds floating in drifting wind lines
+    fog           flat banks of mist, in horizontal wavy bands
+    rain          a cloud and raindrops, left smooth in slanting rain
+    thunderstorm  a cloud, a bold lightning bolt, and a few slanted rain lines
+    snow          a big snowflake and two small ones, in gently drifting lines
+    clear_night   a crescent moon and a few small stars
+    windy         swirling gust curls in wavy wind
+
+Sun, clouds, rain, snow, and the temperature digits are Josh Lannin's. The other
+five pictures use the same construction.
 
 Shapes and the temperature sit on swept, smooth sand; everything else is textured. Background
 lines flow around each shape instead of through it, which is what outlines the shape. The ball
@@ -45,7 +53,7 @@ The drawing ends inside the panel. `--update` makes a short segment that re-swee
 panel and writes a new number, leaving the rest of the picture alone.
 
 Usage:
-  python3 designs/weather.py sunny 72 [OUT]       full picture (about 15 minutes to draw)
+  python3 designs/weather.py sunny 72 [OUT]       full picture (about 16 minutes to draw)
   python3 designs/weather.py --update 75 [OUT]    temperature only (about 6 minutes)
 Temperatures can be -99..199. OUT ending in .json is an `xy` drawing for driftd's /show;
 otherwise it's HoMedics Drift .txt. --rotate turns the picture to match how the table sits.
@@ -201,6 +209,158 @@ def flake(c, r, tilt=math.pi / 2, twigs=True):
         for k in range(1, 7):
             pts += arm(phi + k * step)
         return pts[:-1] + [polar(c, r, phi)]   # the last arm runs on out to the corner
+
+    return Shape(c, radius, snap, detail)
+
+
+def _edge_radius(vertices):
+    """Radius of a polygon that is star-shaped around the origin. `vertices` go around once."""
+    def radius(phi):
+        dx, dy = math.cos(phi), math.sin(phi)
+        best = None
+        for i, (x1, y1) in enumerate(vertices):
+            x2, y2 = vertices[(i + 1) % len(vertices)]
+            ex, ey = x2 - x1, y2 - y1
+            det = dx * ey - dy * ex
+            if abs(det) < 1e-12:
+                continue
+            t = (x1 * ey - y1 * ex) / det
+            s = (x1 * dy - y1 * dx) / det
+            if t > 1e-5 and -1e-4 <= s <= 1 + 1e-4 and (best is None or t < best):
+                best = t
+        return best if best is not None else 0.05
+    return radius
+
+
+def bolt(c, scale=0.50):
+    """A thick lightning bolt, star-shaped from a point in the middle of the zigzag.
+
+    The corners stay in angle order around that point, so the outline is one jagged
+    polygon: wide top, a step to the right, a step to the left, and a long tip.
+    """
+    # Centred on the star point of the unit bolt, then scaled to the table.
+    # Wide enough to read as a bolt, still one polygon around that point.
+    raw = (
+        (-0.02400, 0.44400),
+        (0.34400, 0.44400),
+        (0.12000, 0.13120),
+        (0.47200, 0.05760),
+        (0.15200, -0.18160),
+        (0.28000, -0.52200),
+        (-0.07200, -0.16320),
+        (-0.32800, 0.00240),
+        (-0.04000, 0.18640),
+    )
+    return Shape(c, _edge_radius([(x * scale, y * scale) for x, y in raw]))
+
+
+def crescent(c, scale=0.86, tilt=0.55):
+    """A crescent: the part of one circle outside a second circle that bites into it.
+
+    The shape centre sits in the thick of the crescent, where every direction
+    reaches the edge exactly once. `tilt` turns the horns (0 opens to the right).
+    """
+    outer = (0.22 * scale, 0.0)
+    inner = (0.40 * scale, 0.0)
+    outer_r, inner_r = 0.34 * scale, 0.28 * scale
+    ct, st = math.cos(tilt), math.sin(tilt)
+    outer = (outer[0] * ct - outer[1] * st, outer[0] * st + outer[1] * ct)
+    inner = (inner[0] * ct - inner[1] * st, inner[0] * st + inner[1] * ct)
+
+    def hits(cx, cy, r, phi):
+        dx, dy = math.cos(phi), math.sin(phi)
+        b = cx * dx + cy * dy
+        disc = b * b - (cx * cx + cy * cy - r * r)
+        if disc < 1e-12:
+            return []
+        root = math.sqrt(disc)
+        return [t for t in (b - root, b + root) if t > 1e-5]
+
+    def radius(phi):
+        found = []
+        for t in hits(outer[0], outer[1], outer_r, phi):
+            x, y = t * math.cos(phi), t * math.sin(phi)
+            if math.hypot(x - inner[0], y - inner[1]) >= inner_r - 1e-4:
+                found.append(t)
+        for t in hits(inner[0], inner[1], inner_r, phi):
+            x, y = t * math.cos(phi), t * math.sin(phi)
+            if math.hypot(x - outer[0], y - outer[1]) <= outer_r + 1e-4:
+                found.append(t)
+        return min(found) if found else outer_r
+    return Shape(c, radius)
+
+
+def sun_behind(c, cloud_shape, r_in=0.15, r_out=0.32, rays=12, disc=0.13):
+    """The sun, with any ray that would enter `cloud_shape` cut off at its edge.
+
+    Drawn before the cloud, so the shortened rays read as going behind it. A hair
+    of gap keeps the two shapes from sharing sand; the grooves close that gap.
+    """
+    def raw(phi):
+        u = (phi * rays / (2 * math.pi)) % 1
+        return r_in + (r_out - r_in) * abs(2 * u - 1)
+
+    def radius(phi):
+        base = raw(phi)
+        dx, dy = math.cos(phi), math.sin(phi)
+        # The tip can sit past the cloud while the middle of the ray crosses it.
+        hit = None
+        for i in range(1, 25):
+            t = base * i / 24
+            if cloud_shape.contains((c[0] + dx * t, c[1] + dy * t)):
+                hit = t
+                break
+        if hit is None:
+            return base
+        lo, hi = 0.0, hit
+        for _ in range(16):
+            mid = (lo + hi) / 2
+            if cloud_shape.contains((c[0] + dx * mid, c[1] + dy * mid)):
+                hi = mid
+            else:
+                lo = mid
+        return max(0.05, lo - 0.02)
+
+    def snap(phi):
+        return (math.floor(phi * rays / (2 * math.pi)) + 0.5) * 2 * math.pi / rays
+
+    def detail(phi):
+        n = int(2 * math.pi * disc / STEP)
+        pts = [polar(c, disc, phi + 2 * math.pi * i / n) for i in range(n + 1)]
+        return pts + [polar(c, radius(phi), phi)]
+
+    return Shape(c, radius, snap, detail)
+
+
+def band(c, w, h, waves=3.0, phase=0.0):
+    """A flat mist bank: a wide, low ellipse with a wavy edge."""
+    def radius(phi):
+        a, b = w / 2, h / 2
+        base = a * b / math.hypot(b * math.cos(phi), a * math.sin(phi))
+        return base * (1 + 0.12 * math.sin(waves * phi + phase))
+    return Shape(c, radius)
+
+
+def curl(c, r, spin=1.0, tilt=0.0):
+    """A gust: an oval head swept smooth, with a spiral groove for the curl."""
+    def radius(phi):
+        ang = phi - tilt
+        return r * (0.76 + 0.30 * math.cos(ang))
+
+    def snap(phi):
+        return tilt
+
+    def detail(phi):
+        turns = 2.15
+        n = max(28, int(turns * 2 * math.pi * r / STEP))
+        pts = []
+        for i in range(n + 1):
+            t = i / n
+            ang = phi + spin * turns * 2 * math.pi * t
+            pts.append(polar(c, max(0.015, radius(ang) * (0.90 - 0.66 * t)), ang))
+        pts.append(polar(c, radius(phi) * 0.42, phi + spin * 0.35))
+        pts.append(polar(c, radius(phi), phi))
+        return pts
 
     return Shape(c, radius, snap, detail)
 
@@ -519,7 +679,66 @@ def scene(name):
                   flake((0.66, -0.22), 0.17, twigs=False)]
         # Snow drifting down: wavy vertical lines, which also cross the moves between the flakes.
         return shapes, [(parallel_rows(90, 0.085, lambda s, k: 0.03 * math.sin(5 * s + 0.7 * k)), Frame())]
-    raise SystemExit(f"unknown condition {name!r}: sunny, cloudy, rain or snow")
+    if name == "thunderstorm":
+        # The bolt hangs just under the cloud. Slanted rows below the cloud's base are the
+        # rain; above it, a quiet sky that flows over the cloud. The two stay apart by a
+        # hair so the background can pass between them.
+        sky = cloud((0.0, -0.20), 0.88, 0.32)
+        strike = bolt((0.04, -0.62), scale=0.56)
+        base = -0.36
+        return [sky, strike], [
+            (parallel_rows(70, 0.095), Frame(hi=base)),
+            (parallel_rows(0, 0.085, lambda s, k: 0.012 * math.sin(2.3 * s + 0.3 * k)),
+             Frame(lo=base)),
+        ]
+    if name == "partlycloudy":
+        # Sun first, cloud second, so the cloud's sweep covers the rays it cuts off.
+        cover = cloud((0.26, -0.30), 0.76, 0.30, lobes=3, phase=0.7)
+        day = sun_behind((-0.22, -0.42), cover)
+        return [day, cover], [(ring_rows(day.c, day.rmax + 0.05, 0.09), Frame())]
+    if name == "clear_night":
+        moon = crescent((-0.02, -0.42), scale=0.90, tilt=0.65)
+        stars = [
+            sun((0.50, -0.24), 0.058, 0.10, rays=4, disc=0.028),
+            sun((-0.48, -0.58), 0.055, 0.090, rays=4, disc=0.026),
+            sun((0.34, -0.70), 0.055, 0.086, rays=4, disc=0.024),
+        ]
+        return [moon, *stars], [
+            (parallel_rows(0, 0.072, lambda s, k: 0.010 * math.sin(2.0 * s + 0.3 * k)), Frame())
+        ]
+    if name == "fog":
+        # Flat wavy banks, stacked, with mist lines flowing around them.
+        banks = [
+            band((0.04, -0.24), 0.90, 0.15, 2.4, 0.3),
+            band((-0.10, -0.46), 0.62, 0.14, 2.8, 1.2),
+            band((0.02, -0.68), 0.98, 0.15, 2.2, 2.1),
+        ]
+
+        def mist(s, k):
+            return 0.026 * math.sin(3.3 * s + 0.55 * k)
+        return banks, [(parallel_rows(0, 0.058, mist), Frame())]
+    if name == "windy":
+        gusts = [
+            curl((-0.42, -0.24), 0.17, spin=1.0, tilt=0.9),
+            curl((0.02, -0.50), 0.24, spin=-1.0, tilt=-0.45),
+            curl((0.46, -0.22), 0.15, spin=1.0, tilt=2.1),
+        ]
+
+        def gust(s, k, shapes=gusts):
+            y0 = -RIM + 0.033 + 0.066 * k
+            dy = 0.032 * math.sin(2.4 * s + 0.45 * k)
+            for shape in shapes:
+                reach = shape.rmax * 2.3
+                dx = s - shape.c[0]
+                q = (dx / reach) ** 2 + ((y0 - shape.c[1]) / reach) ** 2
+                if q < 1.0:
+                    dy += 0.05 * (dx / reach) * (1.0 - q)
+            return dy
+        return gusts, [(parallel_rows(0, 0.066, gust), Frame())]
+    raise SystemExit(
+        f"unknown condition {name!r}: sunny, partlycloudy, cloudy, fog, rain, "
+        "thunderstorm, snow, clear_night or windy"
+    )
 
 
 def build(condition, value):

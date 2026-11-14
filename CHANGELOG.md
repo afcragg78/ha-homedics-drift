@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.1
+
+- Five more weather symbols: thunderstorm, partly cloudy, clear night, fog, and wind. Lightning and lightning-rainy draw the storm; clear-night draws the moon; windy and windy-variant draw the gusts. Sun, clouds, rain, snow, and the temperature digits are unchanged.
+- A weather path no longer draws a full orbit each time it crosses the negative x-axis. Theta is unwrapped, the same way the other drawings already do, so the ball follows the picture.
+
 ## 1.4.0
 
 - Photo to Sand. `homedics_drift.draw_photo` turns a picture, or a prompt that makes one, into a single ball path: a swept subject, the outline drawn twice, and contour lines that flow around it and fill the table.

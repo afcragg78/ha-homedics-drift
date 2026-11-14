@@ -191,9 +191,14 @@ draw_weather:
         select:
           options:
             - sunny
+            - partlycloudy
             - cloudy
+            - fog
             - rain
+            - thunderstorm
             - snow
+            - clear_night
+            - windy
     temperature:
       example: 72
       selector:

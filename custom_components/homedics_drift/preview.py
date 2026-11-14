@@ -12,15 +12,26 @@ import math
 
 
 def render_thr(text: str, size: int = 256) -> bytes:
-    """Preview the same points that will be uploaded."""
-    from .patterns import densify, parse_thr
+    """Preview the same points that will be uploaded.
 
-    return render_preview(densify(parse_thr(text)), size=size)
+    The groove follows linear theta-rho motion, which is how the ball moves.
+    """
+    from .patterns import parse_thr
+
+    return render_preview(parse_thr(text), size=size)
 
 
 def render_preview(points: list[tuple[float, float]], size: int = 256) -> bytes:
-    """Draw densified polar points as grooves in tan sand. Returns a PNG."""
+    """Draw polar points as grooves in tan sand. Returns a PNG.
+
+    Samples are filled in by linear steps in theta and rho before the groove
+    is drawn. A jump of 2π is an orbit on the table, and it is an orbit here.
+    """
     from PIL import Image, ImageDraw, ImageFilter
+
+    from .patterns import densify
+
+    points = densify(points)
 
     margin = max(6, size // 16)
     center = (size - 1) / 2

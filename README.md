@@ -48,7 +48,7 @@ All credit for the protocol goes to Josh Lannin's [Drifted](https://github.com/j
 
 The **Sisyphus Classics** gallery tracks are converted from Bruce Shapiro's [sisyphus](https://github.com/Dithermaster/sisyphus) repository, MIT licensed, Copyright (c) 2018 Dithermaster. The license is in `custom_components/homedics_drift/sisyphus/LICENSE`.
 
-The weather picture (sun, clouds, rain, snow, and the temperature digits) is Josh Lannin's Drifted design [`designs/weather.py`](https://github.com/joshlannin/drifted/blob/main/designs/weather.py), MIT licensed, Copyright (c) 2026 Altimix LLC. It is vendored as `custom_components/homedics_drift/weather_design.py`. The sand twin used by Photo to Sand is ported from Drifted's [`tools/twin/sand.py`](https://github.com/joshlannin/drifted/blob/main/tools/twin/sand.py), the same license and copyright. See [NOTICE](NOTICE).
+The weather picture is Josh Lannin's Drifted design [`designs/weather.py`](https://github.com/joshlannin/drifted/blob/main/designs/weather.py), MIT licensed, Copyright (c) 2026 Altimix LLC, vendored as `custom_components/homedics_drift/weather_design.py`. Sun, clouds, rain, snow, and the temperature digits are his. The sand twin used by Photo to Sand is ported from Drifted's [`tools/twin/sand.py`](https://github.com/joshlannin/drifted/blob/main/tools/twin/sand.py), the same license and copyright. See [NOTICE](NOTICE).
 
 This Home Assistant integration was converted from Drifted using Grok Bot.
 
@@ -220,7 +220,17 @@ actions:
 
 ## Weather drawing
 
-The picture is a sun, two clouds, rain, or snow, with the forecast high in big digits. It is Josh Lannin's weather design from [Drifted](https://github.com/joshlannin/drifted/blob/main/designs/weather.py) (MIT, Copyright (c) 2026 Altimix LLC), vendored as `custom_components/homedics_drift/weather_design.py`.
+The picture is one of nine symbols, with the forecast high in big digits. Sun, clouds, rain, snow, and the digits are Josh Lannin's weather design from [Drifted](https://github.com/joshlannin/drifted/blob/main/designs/weather.py) (MIT, Copyright (c) 2026 Altimix LLC), vendored as `custom_components/homedics_drift/weather_design.py`. Thunderstorm, partly cloudy, clear night, fog, and wind are drawn the same way: each shape is swept smooth by a tight spiral, the outline is drawn twice, and the background lines flow around the shapes. The ball never lifts. Previews at 55° are in `docs/weather/`.
+
+- **sunny** — a sun with pointed rays, and ripples across the table
+- **partlycloudy** — that sun, with some rays behind a cloud
+- **cloudy** — two clouds in drifting lines
+- **fog** — stacked wavy mist bands
+- **rain** — a cloud and raindrops in slanting rain
+- **thunderstorm** — a cloud, a bold lightning bolt, and a few slanted rain lines
+- **snow** — a big snowflake and two small ones
+- **clear_night** — a crescent moon and a few small stars
+- **windy** — swirling gust curls
 
 1. Open **Settings → Devices & services → HoMedics Drift → Configure**.
 2. **Weather entity**: pick any Home Assistant weather entity. National Weather Service, Met.no, OpenWeatherMap, and any other weather integration all work. The integration calls `weather.get_forecasts` with `type: daily` and uses the first day: its condition, and its high (`temperature`, not the overnight low).
@@ -245,7 +255,7 @@ data:
   play: true
 ```
 
-Or name them. `condition` is `sunny`, `cloudy`, `rain`, or `snow`. `temperature` is an integer from -99 to 199. `play` defaults to true, and it still plays only while Power is on.
+Or name them. `condition` is `sunny`, `partlycloudy`, `cloudy`, `fog`, `rain`, `thunderstorm`, `snow`, `clear_night`, or `windy`. `temperature` is an integer from -99 to 199. `play` defaults to true, and it still plays only while Power is on.
 
 ```yaml
 action: homedics_drift.draw_weather
@@ -255,7 +265,7 @@ data:
   play: true
 ```
 
-Forecast conditions are grouped: sunny and clear-night draw the sun; partlycloudy, cloudy, fog, windy, windy-variant, and exceptional draw the clouds; rainy, pouring, lightning, lightning-rainy, and hail draw the rain; snowy and snowy-rainy draw the snow.
+Forecast conditions: sunny draws the sun; partlycloudy draws the sun behind a cloud; cloudy and exceptional draw the clouds; fog draws the mist; rainy, pouring, and hail draw the rain; lightning and lightning-rainy draw the thunderstorm; snowy and snowy-rainy draw the snow; clear-night draws the moon; windy and windy-variant draw the gusts.
 
 The pattern is always stored under the name **Weather**, in the same slot each time. The id is 50000 or above. It will not replace a pattern that came with the table, the protected clean pattern, or a pattern that is drawing. If only the high changed and Weather is still the pattern on the sand, and the ball is idle, just the temperature digits are redrawn.
 

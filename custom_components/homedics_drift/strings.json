@@ -341,7 +341,7 @@
         },
         "condition": {
           "name": "Condition",
-          "description": "sunny, cloudy, rain, or snow. Leave empty to use the daily forecast."
+          "description": "sunny, partlycloudy, cloudy, fog, rain, thunderstorm, snow, clear_night, or windy. Leave empty to use the daily forecast."
         },
         "temperature": {
           "name": "Temperature",
