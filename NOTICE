@@ -8,6 +8,14 @@ Weather design
   MIT License. The copyright notice and the permission notice are in that file
   and in LICENSE.
 
+Sand twin
+  custom_components/homedics_drift/twin.py
+  Ported from Josh Lannin's Drifted tools/twin/sand.py
+  https://github.com/joshlannin/drifted/blob/main/tools/twin/sand.py
+  Copyright (c) 2026 Altimix LLC
+  MIT License. The copyright notice and the permission notice are in that file
+  and in LICENSE.
+
 Sisyphus Classics tracks
   custom_components/homedics_drift/sisyphus/
   Converted from Bruce Shapiro's sisyphus repository

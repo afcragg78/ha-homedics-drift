@@ -245,6 +245,11 @@ def feedback_text(
     error: str = "",
 ) -> str:
     """The sentence shown for one stage of a drawing or gallery send."""
+    if stage == "previewing":
+        subject = prompt or name or "a photo"
+        return f'Preparing a sand preview of "{subject}"…'
+    if stage == "preview":
+        return f"Preview ready: {name}. Nothing was sent to the table."
     if stage == "drawing":
         return f'Drawing "{prompt}" with {assistant}…'
     if stage == "cleaning":

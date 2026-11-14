@@ -25,10 +25,11 @@ If a button cannot run, the card says so in a sentence. It does not show a stack
 
 ## Features you need to turn on
 
-Two features do nothing until you set them up. Neither one needs YAML.
+Two features do nothing until you set them up. Photo to Sand works from a picture you already have; its camera check stays off until you turn it on. None of them need YAML.
 
 - [Weather drawing](#weather-drawing) puts today's forecast on the sand.
 - [AI drawing](#ai-drawing) turns a short prompt into a pattern.
+- [Photo to Sand](#photo-to-sand) draws a photo as a bold outline with contour lines that fill the table.
 
 ### The card still looks like an old version
 
@@ -47,7 +48,7 @@ All credit for the protocol goes to Josh Lannin's [Drifted](https://github.com/j
 
 The **Sisyphus Classics** gallery tracks are converted from Bruce Shapiro's [sisyphus](https://github.com/Dithermaster/sisyphus) repository, MIT licensed, Copyright (c) 2018 Dithermaster. The license is in `custom_components/homedics_drift/sisyphus/LICENSE`.
 
-The weather picture (sun, clouds, rain, snow, and the temperature digits) is Josh Lannin's Drifted design [`designs/weather.py`](https://github.com/joshlannin/drifted/blob/main/designs/weather.py), MIT licensed, Copyright (c) 2026 Altimix LLC. It is vendored as `custom_components/homedics_drift/weather_design.py`. See [NOTICE](NOTICE).
+The weather picture (sun, clouds, rain, snow, and the temperature digits) is Josh Lannin's Drifted design [`designs/weather.py`](https://github.com/joshlannin/drifted/blob/main/designs/weather.py), MIT licensed, Copyright (c) 2026 Altimix LLC. It is vendored as `custom_components/homedics_drift/weather_design.py`. The sand twin used by Photo to Sand is ported from Drifted's [`tools/twin/sand.py`](https://github.com/joshlannin/drifted/blob/main/tools/twin/sand.py), the same license and copyright. See [NOTICE](NOTICE).
 
 This Home Assistant integration was converted from Drifted using Grok Bot.
 
@@ -262,6 +263,58 @@ The pattern is always stored under the name **Weather**, in the same slot each t
 
 If no weather entity is chosen, and the service does not include both a condition and a temperature, the error asks you to choose one in Configure.
 
+## Photo to Sand
+
+A photo becomes one continuous line: the subject is swept smooth, its outline is drawn twice so it stays bold, and wavy rows fill the rest of the table by flowing around the subject instead of through it. That is the same idea as the weather picture. The ball never lifts, so every move is part of the path.
+
+The path is checked on a digital twin of the sand before anything is sent. The twin is Josh Lannin's Drifted model ([`tools/twin/sand.py`](https://github.com/joshlannin/drifted/blob/main/tools/twin/sand.py), MIT, Copyright (c) 2026 Altimix LLC), ported in `custom_components/homedics_drift/twin.py`. It ploughs a groove about 0.068 radii wide, lets the ball lag on corners, and treats a long move as a spiral. The integration tries a few outline sizes and row spacings, scores each picture for a recognizable outline, coverage of the table, and long stray lines, and keeps the best. Numpy does the grid. Pillow, which Home Assistant already ships, writes the PNG. OpenCV is not used.
+
+![Heart, the photo](docs/photo-to-sand-heart.png)
+
+![Heart, the twin preview](docs/photo-to-sand-heart-preview.png)
+
+![Star, the twin preview](docs/photo-to-sand-star-preview.png)
+
+1. Put a png, jpg, webp, gif, or bmp in `/config/www` or `/config/media`. A path outside those folders is refused. `/local/cat.png` is the same file as `/config/www/cat.png`. A `media-source://` id works too.
+2. Call the service with `preview: true` (the default). Nothing is uploaded and the ball does not move.
+
+```yaml
+action: homedics_drift.draw_photo
+data:
+  image: /config/www/cat.png
+  name: Cat
+  preview: true
+```
+
+The reply includes `preview` (`/local/homedics_drift/photo-preview.png`), `score`, and `points`. The same PNG is the **Photo preview** image entity. **AI drawing** shows `preview` while you look at it.
+
+3. When the preview looks right, draw it. `confirm: true` with no new photo uses the last preview. `play: true` starts it only while Power is on. If Power is off, the pattern is saved and not played.
+
+```yaml
+action: homedics_drift.draw_photo
+data:
+  confirm: true
+  play: true
+```
+
+`preview: false` builds and uploads in one call. `rotate` is -180 to 180 degrees counter-clockwise, for a table whose front is not where the photo's top is.
+
+A prompt uses the AI Task you already picked for drawings. It calls `ai_task.generate_image` once, then runs that picture through the same path. The prompt asks for one bold subject on a plain background. If that service is missing, save a file instead.
+
+```yaml
+action: homedics_drift.draw_photo
+data:
+  prompt: a sitting cat
+  name: Cat
+  preview: true
+```
+
+**Clean before AI drawings** (on by default) wipes the sand first when the photo is actually played and Power is on. It does not follow the **Clean before pattern** switch, and a preview never wipes. The notification says `Cleaning sand…`, then the usual uploading and done notices. A second photo while one is running is refused.
+
+The upload uses the same guardrails as any other pattern: an id at or above 50000, never a pattern that shipped with the table, never the pattern that is drawing, never the protected clean pattern, and never past the point limit.
+
+**Camera feedback** is off unless you set it. In **Configure**, **Camera for photo feedback** takes one camera entity. After a photo drawing finishes (not after a preview), Home Assistant takes one snapshot and logs how well it matches the twin. The score is `Photo feedback match score` in the log, and `photo_match` on the **AI drawing** sensor. A miss does not change the sand and does not fail the drawing. Leave the camera empty to keep this off.
+
 ## AI drawing
 
 This integration does not store an API key. It asks an assistant you already added to Home Assistant, once, for a list of points.
@@ -415,7 +468,7 @@ Draw on a gallery picture uploads that design and plays it only while Power is o
 ## Development
 
 ```bash
-python -m pip install pytest pillow
+python -m pip install pytest pillow numpy
 python -m pytest
 ```
 

@@ -25,6 +25,7 @@ async def async_setup_entry(
     async_add_entities(
         [
             DriftPreviewImage(coordinator),
+            DriftPhotoPreviewImage(coordinator),
             DriftGalleryImage(coordinator),
             *[DriftGalleryTile(coordinator, name) for name in gallery_names()],
         ]
@@ -72,6 +73,34 @@ class DriftPreviewImage(DriftEntity, ImageEntity):
     async def async_image(self) -> bytes | None:
         """The saved PNG, or nothing when this pattern has no preview."""
         return await self.hass.async_add_executor_job(self.coordinator.preview_bytes)
+
+
+class DriftPhotoPreviewImage(DriftEntity, ImageEntity):
+    """The sand twin's picture of the last photo. Nothing is sent until you confirm."""
+
+    _attr_translation_key = "photo_preview"
+    _attr_content_type = "image/png"
+    _attr_icon = "mdi:image-filter-frames"
+
+    def __init__(self, coordinator: DriftCoordinator) -> None:
+        """Identify the preview."""
+        super().__init__(coordinator)
+        ImageEntity.__init__(self, coordinator.hass)
+        self._attr_unique_id = f"{coordinator.address}-photo-preview"
+
+    @property
+    def available(self) -> bool:
+        """Shown once a preview exists, even if the table has not reported yet."""
+        return self.coordinator.photo_preview_png is not None
+
+    @property
+    def image_last_updated(self) -> datetime | None:
+        """Changes when a new photo is prepared."""
+        return self.coordinator.photo_preview_at
+
+    async def async_image(self) -> bytes | None:
+        """The twin PNG. The table is not drawn by opening this picture."""
+        return self.coordinator.photo_preview_png
 
 
 class DriftGalleryImage(DriftEntity, ImageEntity):

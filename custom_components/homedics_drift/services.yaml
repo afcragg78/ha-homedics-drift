@@ -206,6 +206,47 @@ draw_weather:
       selector:
         boolean:
 
+draw_photo:
+  fields:
+    device_id:
+      selector:
+        device:
+          integration: homedics_drift
+    image:
+      example: /config/www/cat.png
+      selector:
+        text:
+    prompt:
+      example: a sitting cat
+      selector:
+        text:
+          multiline: true
+    name:
+      example: Cat
+      selector:
+        text:
+    play:
+      default: false
+      selector:
+        boolean:
+    preview:
+      default: true
+      selector:
+        boolean:
+    confirm:
+      default: false
+      selector:
+        boolean:
+    rotate:
+      default: 0
+      selector:
+        number:
+          min: -180
+          max: 180
+          step: 1
+          mode: box
+          unit_of_measurement: °
+
 set_favorite:
   fields:
     device_id:

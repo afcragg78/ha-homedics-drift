@@ -132,6 +132,9 @@
       "gallery_preview": {
         "name": "Gallery preview"
       },
+      "photo_preview": {
+        "name": "Photo preview"
+      },
       "gallery_tile": {
         "name": "Gallery design"
       }
@@ -146,11 +149,12 @@
     "step": {
       "init": {
         "title": "Drawing options",
-        "description": "AI drawings use an AI Task if you have one. Leave it empty to use Home Assistant's preferred AI Task, or the first one that is online. Weather drawings use any weather entity. Auto Weather starts on only the first time that switch is added. No API key is stored here.",
+        "description": "AI drawings use an AI Task if you have one. Leave it empty to use Home Assistant's preferred AI Task, or the first one that is online. Weather drawings use any weather entity. Photo feedback compares a camera snapshot with the sand twin after a photo drawing, and it stays off until you pick a camera. Auto Weather starts on only the first time that switch is added. No API key is stored here.",
         "data": {
           "ai_task_entity": "AI Task entity",
           "conversation_agent": "Conversation agent",
           "clean_before_ai": "Clean before AI drawings",
+          "photo_feedback_camera": "Camera for photo feedback",
           "weather_entity": "Weather entity",
           "weather_unit": "Temperature unit",
           "weather_rotation": "Rotation",
@@ -346,6 +350,44 @@
         "play": {
           "name": "Play",
           "description": "Start the drawing when Power is on. Defaults to on."
+        }
+      }
+    },
+    "draw_photo": {
+      "name": "Draw photo",
+      "description": "Turn a photo into one continuous sand drawing: a bold outline with contour lines around it. Preview writes the twin picture and does not move the ball. Confirm draws the last preview. Plays only while Power is on.",
+      "fields": {
+        "device_id": {
+          "name": "Table",
+          "description": "Drift table. Needed only when more than one table is set up."
+        },
+        "image": {
+          "name": "Photo",
+          "description": "A png or jpg under /config/www or /config/media, a /local/ path, or a media-source id."
+        },
+        "prompt": {
+          "name": "Prompt",
+          "description": "Words for an AI Task to turn into a picture first. Use this or a photo, not both required."
+        },
+        "name": {
+          "name": "Name",
+          "description": "Name in the Pattern list. Defaults to the file name or the prompt."
+        },
+        "play": {
+          "name": "Play",
+          "description": "Start the drawing when Power is on. Ignored while preview is on."
+        },
+        "preview": {
+          "name": "Preview only",
+          "description": "Write the sand twin picture and do not upload. Defaults to on."
+        },
+        "confirm": {
+          "name": "Confirm",
+          "description": "Draw the last preview. With a new photo, build it and then draw."
+        },
+        "rotate": {
+          "name": "Rotation",
+          "description": "Turn the picture counter-clockwise, from -180 to 180 degrees."
         }
       }
     },

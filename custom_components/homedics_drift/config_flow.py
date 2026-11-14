@@ -19,6 +19,7 @@ from .const import (
     CONF_AI_TASK_ENTITY,
     CONF_CLEAN_BEFORE_AI,
     CONF_CONVERSATION_AGENT,
+    CONF_PHOTO_CAMERA,
     CONF_WEATHER_AFTER_PATTERN,
     CONF_WEATHER_COOLDOWN_MIN,
     CONF_WEATHER_ENTITY,
@@ -92,6 +93,9 @@ class DriftOptionsFlow(OptionsFlow):
             entity = weather[CONF_WEATHER_ENTITY]
             if isinstance(entity, str) and entity.strip():
                 cleaned[CONF_WEATHER_ENTITY] = entity.strip()
+            camera = user_input.get(CONF_PHOTO_CAMERA)
+            if isinstance(camera, str) and camera.strip():
+                cleaned[CONF_PHOTO_CAMERA] = camera.strip()
             return self.async_create_entry(title="", data=cleaned)
         current = self.config_entry.options
         weather = weather_options_from(current)
@@ -109,6 +113,17 @@ class DriftOptionsFlow(OptionsFlow):
                 default=current.get(CONF_CLEAN_BEFORE_AI, True),
             ): selector.selector({"boolean": {}})
         }
+        camera_current = current.get(CONF_PHOTO_CAMERA, "")
+        if isinstance(camera_current, str) and camera_current.strip():
+            camera_key: Any = vol.Optional(
+                CONF_PHOTO_CAMERA,
+                description={"suggested_value": camera_current.strip()},
+            )
+        else:
+            camera_key = vol.Optional(CONF_PHOTO_CAMERA)
+        schema[camera_key] = selector.EntitySelector(
+            selector.EntitySelectorConfig(domain="camera")
+        )
         if task_options:
             schema[
                 vol.Optional(

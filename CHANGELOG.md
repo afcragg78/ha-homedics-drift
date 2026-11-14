@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.0
+
+- Photo to Sand. `homedics_drift.draw_photo` turns a picture, or a prompt that makes one, into a single ball path: a swept subject, the outline drawn twice, and contour lines that flow around it and fill the table.
+- A preview writes the digital twin PNG and does not move the ball. Confirm draws that preview. The twin is ported from Drifted's sand model, MIT, Copyright (c) 2026 Altimix LLC.
+- An optional camera, off until you pick one in Configure, snapshots the table after a photo drawing and logs how well it matches the twin.
+
 ## 1.3.0
 
 - Draw the day's forecast on the sand. **Draw Weather** and `homedics_drift.draw_weather` use a weather entity (National Weather Service, Met.no, OpenWeatherMap, or any other), and **Auto Weather** follows a finished design. The picture is Josh Lannin's Drifted weather design, MIT, Copyright (c) 2026 Altimix LLC.

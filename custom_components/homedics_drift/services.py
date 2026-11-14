@@ -20,6 +20,7 @@ SERVICE_GALLERY = "add_gallery_design"
 SERVICE_IMPORT = "import_pattern_url"
 SERVICE_FAVORITE = "set_favorite"
 SERVICE_DRAW_WEATHER = "draw_weather"
+SERVICE_DRAW_PHOTO = "draw_photo"
 
 _UPLOAD_SCHEMA = vol.Schema(
     {
@@ -67,6 +68,18 @@ _WEATHER_SCHEMA = vol.Schema(
         vol.Optional("condition"): vol.In(["sunny", "cloudy", "rain", "snow"]),
         vol.Optional("temperature"): vol.All(vol.Coerce(int), vol.Range(min=-99, max=199)),
         vol.Optional("play", default=True): cv.boolean,
+    },
+    extra=vol.ALLOW_EXTRA,
+)
+_PHOTO_SCHEMA = vol.Schema(
+    {
+        vol.Optional("image"): cv.string,
+        vol.Optional("prompt"): cv.string,
+        vol.Optional("name"): cv.string,
+        vol.Optional("play", default=False): cv.boolean,
+        vol.Optional("preview", default=True): cv.boolean,
+        vol.Optional("confirm", default=False): cv.boolean,
+        vol.Optional("rotate", default=0): vol.All(vol.Coerce(float), vol.Range(min=-180, max=180)),
     },
     extra=vol.ALLOW_EXTRA,
 )
@@ -170,6 +183,18 @@ async def async_setup_services(hass: HomeAssistant) -> None:
             play=bool(call.data.get("play", True)),
         )
 
+    async def _draw_photo(call: ServiceCall) -> dict[str, object]:
+        coordinator = await _coordinator(hass, call)
+        return await coordinator.async_draw_photo(
+            image=call.data.get("image"),
+            prompt=call.data.get("prompt"),
+            name=call.data.get("name"),
+            play=bool(call.data.get("play", False)),
+            preview=bool(call.data.get("preview", True)),
+            confirm=bool(call.data.get("confirm", False)),
+            rotate=float(call.data.get("rotate", 0)),
+        )
+
     hass.services.async_register(DOMAIN, SERVICE_GALLERY, _gallery, schema=_GALLERY_SCHEMA)
     hass.services.async_register(
         DOMAIN,
@@ -181,6 +206,13 @@ async def async_setup_services(hass: HomeAssistant) -> None:
     hass.services.async_register(DOMAIN, SERVICE_FAVORITE, _favorite, schema=_FAVORITE_SCHEMA)
     hass.services.async_register(
         DOMAIN, SERVICE_DRAW_WEATHER, _draw_weather, schema=_WEATHER_SCHEMA
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_DRAW_PHOTO,
+        _draw_photo,
+        schema=_PHOTO_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
     )
 
 
