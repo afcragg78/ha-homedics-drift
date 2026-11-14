@@ -226,7 +226,7 @@ The picture is one of these symbols, with the forecast high in big digits. Sun, 
 - **partlycloudy** — that sun, with some rays behind a cloud
 - **cloudy** — two clouds in drifting lines
 - **hot** — a thermometer with the column near the top, and heat waves beside it
-- **cold** — a thermometer with the column still in the bulb, a small flake, and icicles
+- **cold** — a thermometer with the column low in the glass, and one small flake beside it
 - **clear_night** — a crescent moon and a few small stars
 - **fog** — stacked wavy mist bands
 - **rain** — a cloud and raindrops in slanting rain
@@ -235,7 +235,7 @@ The picture is one of these symbols, with the forecast high in big digits. Sun, 
 - **hail** — a cloud and round hailstones
 - **sleet** — drops and flakes together
 - **snow** — a big snowflake and two small ones
-- **windy** — long gust strokes with tight spiral curls: swooshes, speed lines, and an S
+- **windy** — curved gusts in free groups, left ends staggered, each long line ending in an open curl
 - **alert** — a warning triangle
 
 1. Open **Settings → Devices & services → HoMedics Drift → Configure**.
