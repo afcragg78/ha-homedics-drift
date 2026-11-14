@@ -204,6 +204,30 @@ def test_each_service_reaches_its_coordinator(services) -> None:
     assert table.calls[-1] == ("draw_weather", "sunny", 70, True)
 
 
+def test_draw_weather_can_force_a_wind_combo(services) -> None:
+    hass = _Hass()
+    table = _Table()
+    hass.config_entries.add("entry-1", table)
+    hass.data["devices"] = {"device-1": {"entry-1"}}
+
+    async def _run() -> None:
+        await services.async_setup_services(hass)
+        await hass.services.async_call(
+            "homedics_drift",
+            "draw_weather",
+            {"device_id": "device-1", "condition": "rain_wind"},
+        )
+        with pytest.raises(vol.MultipleInvalid):
+            await hass.services.async_call(
+                "homedics_drift",
+                "draw_weather",
+                {"device_id": "device-1", "condition": "volcanic"},
+            )
+
+    asyncio.run(_run())
+    assert table.calls == [("draw_weather", "rain_wind", None, True)]
+
+
 def test_two_tables_are_refused(services) -> None:
     hass = _Hass()
     hass.config_entries.add("one", _Table())

@@ -70,6 +70,12 @@ def test_forecast_conditions_map_to_pictures(condition: str, picture: str) -> No
     assert map_condition(condition) == picture
 
 
+def test_a_named_picture_including_a_wind_combo_maps_to_itself() -> None:
+    assert map_condition("windy") == "windy"
+    assert map_condition("rain_wind") == "rain_wind"
+    assert map_condition("hot_wind") == "hot_wind"
+
+
 def test_unknown_condition_is_refused() -> None:
     with pytest.raises(WeatherDesignError):
         map_condition("volcanic")

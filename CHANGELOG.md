@@ -4,6 +4,7 @@
 
 - More weather symbols: thunderstorm, partly cloudy, clear night, fog, wind, hot, cold, hail, sleet, heavy rain, and a weather alert. Wind at or above the threshold is the whole picture on a fair sky, and a run of gusts beside rain, snow, a storm, hail, sleet, fog, hot, cold, or an alert. Defaults are 15 mph / 25 km/h, 90°F / 32°C, 32°F / 0°C, and a 70% chance of heavy rain. An optional alert entity, left empty, stays off.
 - A weather path no longer draws a full orbit each time it crosses the negative x-axis. Theta is unwrapped, the same way the other drawings already do, so the ball follows the picture.
+- `draw_weather` takes an optional `condition`. A name such as `windy` or `rain_wind` draws that picture and skips the forecast rules. Leave it empty to use the daily forecast.
 
 ## 1.4.0
 

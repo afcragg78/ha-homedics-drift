@@ -263,7 +263,7 @@ data:
   play: true
 ```
 
-Or name them. `condition` is one of the symbols above. `temperature` is an integer from -99 to 199. `play` defaults to true, and it still plays only while Power is on. A named condition is drawn as that symbol; the wind, hot, cold, heavy-rain, and alert rules apply when the condition is left to the forecast.
+Or name them. `condition` overrides the forecast: `windy`, `rain`, or a wind combination such as `rain_wind`. The allowed names are sunny, partlycloudy, cloudy, hot, cold, clear_night, fog, rain, heavy_rain, thunderstorm, hail, sleet, snow, windy, alert, rain_wind, heavy_rain_wind, thunderstorm_wind, hail_wind, sleet_wind, snow_wind, fog_wind, hot_wind, cold_wind, and alert_wind. `temperature` is an integer from -99 to 199. `play` defaults to true, and it still plays only while Power is on. A named condition is drawn as that picture. The wind, hot, cold, heavy-rain, and alert rules apply only when condition is left empty.
 
 ```yaml
 action: homedics_drift.draw_weather

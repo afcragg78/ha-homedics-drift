@@ -346,7 +346,7 @@
         },
         "condition": {
           "name": "Condition",
-          "description": "sunny, partlycloudy, cloudy, hot, cold, clear_night, fog, rain, heavy_rain, thunderstorm, hail, sleet, snow, windy, or alert. Leave empty to use the daily forecast."
+          "description": "A picture name, such as windy or rain_wind. Leave empty to use the daily forecast. Allowed: sunny, partlycloudy, cloudy, hot, cold, clear_night, fog, rain, heavy_rain, thunderstorm, hail, sleet, snow, windy, alert, rain_wind, heavy_rain_wind, thunderstorm_wind, hail_wind, sleet_wind, snow_wind, fog_wind, hot_wind, cold_wind, alert_wind."
         },
         "temperature": {
           "name": "Temperature",
