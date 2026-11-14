@@ -1,0 +1,22 @@
+Third-party notices
+
+Weather design
+  custom_components/homedics_drift/weather_design.py
+  Vendored from Josh Lannin's Drifted designs/weather.py
+  https://github.com/joshlannin/drifted/blob/main/designs/weather.py
+  Copyright (c) 2026 Altimix LLC
+  MIT License. The copyright notice and the permission notice are in that file
+  and in LICENSE.
+
+Sisyphus Classics tracks
+  custom_components/homedics_drift/sisyphus/
+  Converted from Bruce Shapiro's sisyphus repository
+  https://github.com/Dithermaster/sisyphus
+  Copyright (c) 2018 Dithermaster
+  MIT License. The license text is in custom_components/homedics_drift/sisyphus/LICENSE.
+
+Drifted protocol
+  The Bluetooth protocol this integration speaks was published by Drifted
+  https://github.com/joshlannin/drifted
+  Copyright (c) 2026 Altimix LLC
+  MIT License. See LICENSE.

@@ -454,6 +454,9 @@ class PatternLibrary:
     aliases: dict[int, str] = field(default_factory=dict)
     clean_before: bool = False
     favorites: set[str] = field(default_factory=set)
+    last_weather_at: float | None = None
+    last_weather_condition: str = ""
+    last_weather_temperature: int | None = None
 
     def name_for(self, pattern_id: int) -> str | None:
         alias = self.aliases.get(pattern_id)
@@ -552,6 +555,9 @@ class PatternLibrary:
             "aliases": {str(pattern_id): name for pattern_id, name in self.aliases.items()},
             "clean_before": self.clean_before,
             "favorites": sorted(self.favorites),
+            "last_weather_at": self.last_weather_at,
+            "last_weather_condition": self.last_weather_condition,
+            "last_weather_temperature": self.last_weather_temperature,
         }
 
     @classmethod
@@ -590,6 +596,15 @@ class PatternLibrary:
                     continue
                 if isinstance(value, str) and value.strip():
                     library.aliases[pattern_id] = value.strip()
+        stamp = data.get("last_weather_at")
+        if isinstance(stamp, (int, float)) and not isinstance(stamp, bool):
+            library.last_weather_at = float(stamp)
+        condition = data.get("last_weather_condition")
+        if isinstance(condition, str):
+            library.last_weather_condition = condition
+        temperature = data.get("last_weather_temperature")
+        if isinstance(temperature, int) and not isinstance(temperature, bool):
+            library.last_weather_temperature = temperature
         return library
 
 

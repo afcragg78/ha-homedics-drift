@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.0
+
+- Draw the day's forecast on the sand. **Draw Weather** and `homedics_drift.draw_weather` use a weather entity (National Weather Service, Met.no, OpenWeatherMap, or any other), and **Auto Weather** follows a finished design. The picture is Josh Lannin's Drifted weather design, MIT, Copyright (c) 2026 Altimix LLC.
+- Stop after this design still pauses the sand. With Auto Weather on, the order is: the finished design pauses, the wipe runs, the weather picture plays, and that picture pauses.
+
 ## 1.2.2
 
 - The Pattern, Playlist, Favorites, and Folder Pattern dropdowns in the card's Table section list their choices again. They opened as an empty strip before.

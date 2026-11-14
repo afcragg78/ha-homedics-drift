@@ -26,6 +26,7 @@ async def async_setup_entry(
             DriftUploadButton(coordinator),
             DriftCleanButton(coordinator),
             DriftAiDrawButton(coordinator),
+            DriftDrawWeatherButton(coordinator),
             DriftSendGalleryButton(coordinator),
             DriftRandomGalleryButton(coordinator),
             DriftReconnectButton(coordinator),
@@ -117,6 +118,23 @@ class DriftAiDrawButton(DriftEntity, ButtonEntity):
             self.coordinator.ai_prompt,
             play=self.coordinator.session_on,
         )
+
+
+class DriftDrawWeatherButton(DriftEntity, ButtonEntity):
+    """Draw today's forecast. Plays only while Power is on."""
+
+    _attr_translation_key = "draw_weather"
+    _attr_icon = "mdi:weather-partly-cloudy"
+
+    def __init__(self, coordinator: DriftCoordinator) -> None:
+        """Identify the button."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}-draw-weather"
+
+    @override
+    async def async_press(self) -> None:
+        """Upload the forecast picture. Power is not turned on."""
+        await self.coordinator.async_draw_weather(play=self.coordinator.session_on)
 
 
 class DriftSendGalleryButton(DriftEntity, ButtonEntity):

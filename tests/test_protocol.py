@@ -566,6 +566,22 @@ def test_stop_after_pauses_at_the_end_without_touching_power() -> None:
     assert watch.observe(session_on=True, drawing=False, progress=1.0, pattern_id=9) is False
 
 
+def test_two_grants_pause_after_the_design_and_not_after_the_wipe() -> None:
+    """A wipe and then a picture. Stop-after waits until the picture ends."""
+    watch = StopAfterWatch()
+    watch.enabled = True
+    assert watch.observe(session_on=True, drawing=True, progress=0.4, pattern_id=3) is False
+    watch.authorize(2)
+    assert watch.observe(session_on=True, drawing=True, progress=0.0, pattern_id=50000) is False
+    assert watch.grants == 1
+    assert watch.observe(session_on=True, drawing=True, progress=0.2, pattern_id=50000) is False
+    assert watch.observe(session_on=True, drawing=True, progress=1.0, pattern_id=50000) is False
+    assert watch.observe(session_on=True, drawing=True, progress=0.0, pattern_id=50010) is False
+    assert watch.grants == 0
+    assert watch.observe(session_on=True, drawing=True, progress=0.2, pattern_id=50010) is False
+    assert watch.observe(session_on=True, drawing=True, progress=1.0, pattern_id=50010) is True
+
+
 def test_player_hides_every_transport_control_while_power_is_off() -> None:
     hidden = player_controls(False)
     assert hidden == frozenset()

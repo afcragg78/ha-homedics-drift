@@ -87,6 +87,9 @@
       "stop_after": {
         "name": "Stop after this design"
       },
+      "auto_weather": {
+        "name": "Auto Weather"
+      },
       "favorite": {
         "name": "Favorite"
       }
@@ -108,6 +111,9 @@
       },
       "draw_with_ai": {
         "name": "Draw with AI"
+      },
+      "draw_weather": {
+        "name": "Draw Weather"
       },
       "send_gallery": {
         "name": "Send gallery design"
@@ -139,12 +145,17 @@
   "options": {
     "step": {
       "init": {
-        "title": "AI drawing",
-        "description": "Pick an AI Task from the list. Each row is the assistant's name and its entity id. Leave it empty to use Home Assistant's preferred AI Task, or the first one that is online. No API key is stored here.",
+        "title": "Drawing options",
+        "description": "AI drawings use an AI Task if you have one. Leave it empty to use Home Assistant's preferred AI Task, or the first one that is online. Weather drawings use any weather entity. Auto Weather starts on only the first time that switch is added. No API key is stored here.",
         "data": {
           "ai_task_entity": "AI Task entity",
           "conversation_agent": "Conversation agent",
-          "clean_before_ai": "Clean before AI drawings"
+          "clean_before_ai": "Clean before AI drawings",
+          "weather_entity": "Weather entity",
+          "weather_unit": "Temperature unit",
+          "weather_rotation": "Rotation",
+          "weather_after_pattern": "Auto Weather starts on",
+          "weather_cooldown_min": "Weather cooldown"
         }
       }
     }
@@ -313,6 +324,28 @@
         "url": {
           "name": "Link",
           "description": "https link to a .thr file or a zip that contains .thr files."
+        }
+      }
+    },
+    "draw_weather": {
+      "name": "Draw weather",
+      "description": "Draw the forecast on the sand. Uses the weather entity from Configure when condition or temperature is left out. Plays only while Power is on.",
+      "fields": {
+        "device_id": {
+          "name": "Table",
+          "description": "Drift table. Needed only when more than one table is set up."
+        },
+        "condition": {
+          "name": "Condition",
+          "description": "sunny, cloudy, rain, or snow. Leave empty to use the daily forecast."
+        },
+        "temperature": {
+          "name": "Temperature",
+          "description": "The high to write, from -99 to 199. Leave empty to use the daily forecast."
+        },
+        "play": {
+          "name": "Play",
+          "description": "Start the drawing when Power is on. Defaults to on."
         }
       }
     },

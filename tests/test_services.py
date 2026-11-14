@@ -96,6 +96,9 @@ class _Table:
     async def async_set_favorite(self, name, on):
         self.calls.append(("set_favorite", name, on))
 
+    async def async_draw_weather(self, condition=None, temperature=None, *, play=True):
+        self.calls.append(("draw_weather", condition, temperature, play))
+
 
 def _install_fakes() -> None:
     core = types.ModuleType("homeassistant.core")
@@ -186,6 +189,7 @@ def test_each_service_reaches_its_coordinator(services) -> None:
         ("add_gallery_design", {"device_id": "device-1", "name": "Drift Away", "play": True}),
         ("import_pattern_url", {"device_id": "device-1", "url": "https://example.com/a.thr"}),
         ("set_favorite", {"device_id": "device-1", "name": "Drift Away", "favorite": True}),
+        ("draw_weather", {"device_id": "device-1", "condition": "sunny", "temperature": 70}),
     ]
     async def _run() -> None:
         await services.async_setup_services(hass)
@@ -197,6 +201,7 @@ def test_each_service_reaches_its_coordinator(services) -> None:
     assert kinds == [name for name, _data in calls]
     gallery = table.calls[5]
     assert gallery == ("add_gallery_design", "Drift Away", True)
+    assert table.calls[-1] == ("draw_weather", "sunny", 70, True)
 
 
 def test_two_tables_are_refused(services) -> None:

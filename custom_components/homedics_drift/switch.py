@@ -10,8 +10,10 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddConfigEntryEntitiesCallback
 from homeassistant.helpers.restore_state import RestoreEntity
 
+from .const import CONF_WEATHER_AFTER_PATTERN
 from .coordinator import DriftConfigEntry, DriftCoordinator
 from .entity import DriftEntity
+from .weather import initial_auto_weather
 
 
 async def async_setup_entry(
@@ -26,6 +28,7 @@ async def async_setup_entry(
             DriftPowerSwitch(coordinator),
             DriftCleanBeforeSwitch(coordinator),
             DriftStopAfterSwitch(coordinator),
+            DriftAutoWeatherSwitch(coordinator),
             DriftFavoriteSwitch(coordinator),
         ]
     )
@@ -169,6 +172,49 @@ class DriftStopAfterSwitch(DriftEntity, RestoreEntity, SwitchEntity):
         """Let the table continue to the next design."""
         self.coordinator.stop_after.enabled = False
         self.coordinator.stop_after.pausing = False
+        self.async_write_ha_state()
+
+
+class DriftAutoWeatherSwitch(DriftEntity, RestoreEntity, SwitchEntity):
+    """After a design finishes, draw the forecast. Off until the user turns it on.
+
+    Home Assistant remembers the switch. The first time it is added, the
+    starting value is the weather_after_pattern option, which defaults to off.
+    """
+
+    _attr_translation_key = "auto_weather"
+    _attr_icon = "mdi:weather-partly-cloudy"
+
+    def __init__(self, coordinator: DriftCoordinator) -> None:
+        """Identify the switch."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{coordinator.address}-auto-weather"
+
+    @property
+    def is_on(self) -> bool:
+        """Local choice. The table is not asked until a design finishes."""
+        return self.coordinator.auto_weather
+
+    @override
+    async def async_added_to_hass(self) -> None:
+        """Restore the switch. The option is only the first value."""
+        await super().async_added_to_hass()
+        last = await self.async_get_last_state()
+        restored = None if last is None else last.state
+        option = self.coordinator.config_entry.options.get(CONF_WEATHER_AFTER_PATTERN, False)
+        self.coordinator.auto_weather = initial_auto_weather(restored, option)
+        self.async_write_ha_state()
+
+    @override
+    async def async_turn_on(self, **kwargs: object) -> None:
+        """Draw the forecast after the next design finishes."""
+        self.coordinator.auto_weather = True
+        self.async_write_ha_state()
+
+    @override
+    async def async_turn_off(self, **kwargs: object) -> None:
+        """Leave the sand alone when a design finishes."""
+        self.coordinator.auto_weather = False
         self.async_write_ha_state()
 
 
