@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.2
+
+- The wind picture is one centered emblem: four long, gently curved lines that start close together on the left and fan out, each ending in an open round curl. Plain horizontal lines flow around it. A windy day beside another symbol uses the same emblem, smaller, on the right.
+
 ## 1.4.1
 
 - More weather symbols: thunderstorm, partly cloudy, clear night, fog, wind, hot, cold, hail, sleet, heavy rain, and a weather alert. Wind at or above the threshold is the whole picture on a fair sky, and a run of gusts beside rain, snow, a storm, hail, sleet, fog, hot, cold, or an alert. Defaults are 15 mph / 25 km/h, 90°F / 32°C, 32°F / 0°C, and a 70% chance of heavy rain. An optional alert entity, left empty, stays off.
