@@ -200,6 +200,14 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         self._upload_ticks = UploadTicks()
         self.gallery_choice = gallery_names()[0]
         self.gallery_preview_at: datetime | None = None
+        self.photo_preview_png: bytes | None = None
+        self.photo_preview_at: datetime | None = None
+        self.photo_preview_thr: str | None = None
+        self.photo_preview_name = ""
+        self.photo_preview_url = ""
+        self.photo_prompt = ""
+        self.photo_score: float | None = None
+        self.photo_match: float | None = None
         self._client: BleakClientWithServiceCache | None = None
         self._device: BLEDevice | None = None
         self._parser = PacketParser()
@@ -1673,6 +1681,370 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
             raise
         finally:
             self._draw_active = False
+
+    async def async_draw_photo(
+        self,
+        *,
+        image: str | None = None,
+        prompt: str | None = None,
+        name: str | None = None,
+        play: bool = False,
+        preview: bool = True,
+        confirm: bool = False,
+        rotate: float = 0.0,
+    ) -> dict[str, object]:
+        """Turn a photo into a sand path. Preview writes the twin picture only.
+
+        ``confirm`` draws the last preview when no new photo is given. A new
+        photo with ``preview`` false, or with ``confirm``, is uploaded after
+        the twin picks the best of a few tries. The heavy work runs in an
+        executor. Clean-first follows the AI drawing option.
+        """
+        self._reject_if_busy()
+        source = (image or "").strip()
+        words = " ".join((prompt or "").split())
+        if confirm and not source and not words:
+            if not self.photo_preview_thr:
+                raise HomeAssistantError("Preview a photo first")
+            title = (name or self.photo_preview_name or "Photo").strip()
+            try:
+                pattern_id = await self._send_photo(
+                    title,
+                    self.photo_preview_thr,
+                    play=play,
+                    prompt=self.photo_prompt or title,
+                    png=self.photo_preview_png,
+                )
+            except HomeAssistantError as err:
+                self._set_ai("error", error=str(err), name=title)
+                self._announce("error", error=str(err), name=title, prompt=self.photo_prompt)
+                raise
+            return self._photo_result(preview_only=False, pattern_id=pattern_id)
+
+        self._draw_active = True
+        title = (name or words[:40] or "Photo").strip()
+        self._set_ai("running", name=title)
+        self.ai_prompt = words or source
+        try:
+            from .photo_path import PatternRejected as PhotoRejected
+            from .photo_path import check_rotation, photo_to_sand
+
+            try:
+                turned = check_rotation(rotate)
+            except PhotoRejected as err:
+                raise HomeAssistantError(err.message) from err
+            picture, label = await self._load_photo(source, words)
+            if not name:
+                title = label[:40] or title
+            self._announce("previewing", prompt=label, name=title)
+            try:
+                drawing = await self.hass.async_add_executor_job(
+                    lambda: photo_to_sand(picture, rotate=turned, detail="preview")
+                )
+            except PhotoRejected as err:
+                raise HomeAssistantError(err.message) from err
+            await self._remember_photo(title, label, drawing)
+            preview_only = preview and not confirm
+            if preview_only:
+                self._set_ai(
+                    "preview",
+                    detail=f"Score {drawing.score:.2f}. Nothing was sent to the table.",
+                    name=title,
+                )
+                self._announce("preview", prompt=label, name=title)
+                return self._photo_result(preview_only=True, pattern_id=None)
+            pattern_id = await self._send_photo(
+                title,
+                drawing.thr,
+                play=play,
+                prompt=label,
+                png=drawing.png,
+                already_busy=True,
+            )
+            return self._photo_result(preview_only=False, pattern_id=pattern_id)
+        except HomeAssistantError as err:
+            self._set_ai("error", error=str(err), name=title)
+            self._announce("error", error=str(err), name=title, prompt=words or source)
+            raise
+        finally:
+            self._draw_active = False
+
+    async def _load_photo(self, image: str, prompt: str) -> tuple[bytes, str]:
+        """Bytes of a local photo, a media-source picture, or an AI Task image."""
+        if image:
+            if image.lower().startswith("media-source:"):
+                return await self._read_media_source(image), "photo"
+            from .photo_path import resolve_photo_file
+
+            try:
+                path = resolve_photo_file(Path(self.hass.config.path()), image)
+            except PatternRejected as err:
+                raise HomeAssistantError(err.message) from err
+            if not path.is_file():
+                raise HomeAssistantError("That photo was not found")
+            payload = await self.hass.async_add_executor_job(path.read_bytes)
+            return payload, path.stem
+        if prompt:
+            return await self._generate_photo(prompt), prompt[:40]
+        raise HomeAssistantError(
+            "Give a photo in /config/www or /config/media, a media source, or a prompt"
+        )
+
+    async def _generate_photo(self, prompt: str) -> bytes:
+        """One AI Task image. The same assistant chosen for drawings is used."""
+        try:
+            kind, target = choose_drawing_assistant(
+                configured_task=self.config_entry.options.get(CONF_AI_TASK_ENTITY),
+                configured_agent=self.config_entry.options.get(CONF_CONVERSATION_AGENT),
+                preferred_task=self._preferred_ai_task(),
+                task_states=self._task_states(),
+                agents=self._conversation_agents(),
+            )
+        except PatternRejected as err:
+            raise HomeAssistantError(err.message) from err
+        if kind != "ai_task":
+            raise HomeAssistantError(
+                "A text prompt needs an AI Task that can generate images. "
+                "Save a picture under /config/www, or pick an AI Task in Configure."
+            )
+        if not self.hass.services.has_service("ai_task", "generate_image"):
+            raise HomeAssistantError(
+                "This Home Assistant cannot generate a picture yet. "
+                "Save one under /config/www and pass that path."
+            )
+        instructions = (
+            "Make one simple picture for a round sand table. "
+            f"Subject: {prompt}. "
+            "Plain light background, one bold dark subject, centered, "
+            "no text, no frame, high contrast."
+        )
+        try:
+            result = await self.hass.services.async_call(
+                "ai_task",
+                "generate_image",
+                {
+                    "task_name": "Drift photo",
+                    "instructions": instructions,
+                    "entity_id": target,
+                },
+                blocking=True,
+                return_response=True,
+            )
+        except HomeAssistantError:
+            raise
+        except Exception as err:
+            raise HomeAssistantError(f"AI Task could not make that picture: {err}") from err
+        return await self._bytes_from_image_result(result)
+
+    async def _bytes_from_image_result(self, result: object) -> bytes:
+        if not isinstance(result, dict):
+            raise HomeAssistantError("The assistant did not return a picture")
+        for key in ("image_data", "image", "data"):
+            raw = result.get(key)
+            if isinstance(raw, (bytes, bytearray)) and raw:
+                return bytes(raw)
+            if isinstance(raw, str) and raw.startswith(("data:image", "iVBOR", "/9j/")):
+                import base64
+
+                encoded = raw.split(",", 1)[-1]
+                try:
+                    return base64.b64decode(encoded)
+                except Exception as err:
+                    raise HomeAssistantError("The assistant did not return a picture") from err
+        media = result.get("media_source_id") or result.get("media_content_id")
+        if isinstance(media, str) and media.startswith("media-source:"):
+            return await self._read_media_source(media)
+        url = result.get("url")
+        if isinstance(url, str) and url.startswith("media-source:"):
+            return await self._read_media_source(url)
+        if isinstance(url, str) and url.startswith("/"):
+            return await self._fetch_local_picture(url)
+        raise HomeAssistantError("The assistant did not return a picture")
+
+    async def _read_media_source(self, media_id: str) -> bytes:
+        try:
+            from homeassistant.components import media_source
+            from homeassistant.components.media_player.browse_media import (
+                async_process_play_media_url,
+            )
+        except ImportError as err:
+            raise HomeAssistantError("Media source is not available") from err
+        try:
+            try:
+                resolved = await media_source.async_resolve_media(self.hass, media_id, None)
+            except TypeError:
+                resolved = await media_source.async_resolve_media(self.hass, media_id)
+        except Exception as err:
+            raise HomeAssistantError("That media source picture could not be read") from err
+        path = getattr(resolved, "path", None)
+        if path and Path(str(path)).is_file():
+            file_path = Path(str(path))
+            return await self.hass.async_add_executor_job(file_path.read_bytes)
+        url = getattr(resolved, "url", "") or ""
+        if not url:
+            raise HomeAssistantError("That media source picture could not be read")
+        try:
+            full = async_process_play_media_url(self.hass, url)
+        except Exception:
+            full = url
+        return await self._fetch_local_picture(full)
+
+    async def _fetch_local_picture(self, url: str) -> bytes:
+        session = async_get_clientsession(self.hass)
+        try:
+            async with session.get(url, timeout=60) as response:
+                if response.status != 200:
+                    raise HomeAssistantError("The picture could not be read")
+                return await response.read()
+        except HomeAssistantError:
+            raise
+        except Exception as err:
+            raise HomeAssistantError("The picture could not be read") from err
+
+    async def _remember_photo(self, title: str, label: str, drawing: object) -> None:
+        """Keep the winning path and write the twin PNG where the dashboard can see it."""
+        png = drawing.png  # type: ignore[attr-defined]
+        self.photo_preview_png = png
+        self.photo_preview_thr = drawing.thr  # type: ignore[attr-defined]
+        self.photo_preview_name = title
+        self.photo_prompt = label
+        self.photo_score = float(drawing.score)  # type: ignore[attr-defined]
+        self.photo_preview_at = datetime.now(timezone.utc)
+        self.photo_preview_url = ""
+        folder = Path(self.hass.config.path("www", "homedics_drift"))
+        dest = folder / "photo-preview.png"
+
+        def _write() -> None:
+            folder.mkdir(parents=True, exist_ok=True)
+            dest.write_bytes(png)
+
+        try:
+            await self.hass.async_add_executor_job(_write)
+            self.photo_preview_url = "/local/homedics_drift/photo-preview.png"
+        except OSError:
+            _LOGGER.warning("Photo preview was not copied to /config/www", exc_info=True)
+        self._publish()
+
+    def _photo_result(self, *, preview_only: bool, pattern_id: int | None) -> dict[str, object]:
+        return {
+            "preview": self.photo_preview_url,
+            "score": None if self.photo_score is None else round(self.photo_score, 3),
+            "points": 0 if not self.photo_preview_thr else self.photo_preview_thr.count("\n"),
+            "preview_only": preview_only,
+            "pattern_id": pattern_id,
+            "name": self.photo_preview_name,
+        }
+
+    async def _send_photo(
+        self,
+        title: str,
+        thr: str,
+        *,
+        play: bool,
+        prompt: str,
+        png: bytes | None,
+        already_busy: bool = False,
+    ) -> int:
+        """Upload a photo path and play it under the same rules as an AI drawing."""
+        if not already_busy:
+            self._reject_if_busy()
+            self._draw_active = True
+        self._upload_ticks = UploadTicks()
+        self._set_ai("running", name=title)
+        try:
+            pattern_id = await self.async_upload_pattern(
+                name=title,
+                thr=thr,
+                source="photo",
+                progress=lambda done, total: self._note_upload(done, total, title),
+            )
+            playing = False
+            if clean_before_ai_drawing(
+                self.config_entry.options.get(CONF_CLEAN_BEFORE_AI, True),
+                play=play,
+                power_on=self.session_on,
+            ):
+                self._announce("cleaning", prompt=prompt, name=title)
+                clean_id = await self._ensure_clean_id()
+                if self.session_on and clean_id != pattern_id:
+                    self.authorize_stop_after(2)
+                    self._clean_follow += 1
+                    token = self._clean_follow
+                    async with self._command_lock:
+                        if self.session_on:
+                            await self.async_send(draw_pattern(clean_id))
+                            self._replace(pattern_id=clean_id, status=1)
+                    if await self._wait_until_clean_done(token, clean_id):
+                        playing = await self._play_if_on(pattern_id, True, grant=False)
+                    else:
+                        self.stop_after.grants = 0
+                else:
+                    playing = await self._play_if_on(pattern_id, True)
+            else:
+                playing = await self._play_if_on(pattern_id, play)
+            if playing and png:
+                self._schedule_photo_feedback(pattern_id, png)
+            detail = "" if playing or not play else "Power is off, so the pattern was saved but not played"
+            self._set_ai("stored", detail=detail, name=title, pattern_id=pattern_id)
+            self._announce("done", name=title, playing=playing, prompt=prompt)
+            return pattern_id
+        except HomeAssistantError:
+            raise
+        finally:
+            if not already_busy:
+                self._draw_active = False
+
+    def _schedule_photo_feedback(self, pattern_id: int, twin_png: bytes) -> None:
+        """After the drawing finishes, compare one camera snapshot with the twin.
+
+        Off unless Configure has a camera entity. The score is only logged.
+        """
+        from .photo_path import configured_camera
+
+        camera = configured_camera(self.config_entry.options)
+        if not camera:
+            return
+        self.hass.async_create_background_task(
+            self._photo_feedback(pattern_id, camera, twin_png),
+            name=f"{DOMAIN}-photo-feedback-{self.address}",
+        )
+
+    async def _photo_feedback(self, pattern_id: int, camera: str, twin_png: bytes) -> None:
+        from .photo_path import match_score
+
+        deadline = asyncio.get_running_loop().time() + 25 * 60
+        seen = False
+        while asyncio.get_running_loop().time() < deadline:
+            data = self.data
+            if data is not None and data.pattern_id == pattern_id and data.drawing:
+                seen = True
+            if seen and data is not None and not data.drawing:
+                break
+            await asyncio.sleep(2)
+        else:
+            _LOGGER.info("Photo feedback skipped: the drawing did not finish in time")
+            return
+        try:
+            from homeassistant.components.camera import async_get_image
+
+            image = await async_get_image(self.hass, camera)
+            content = image.content
+        except Exception:
+            _LOGGER.warning("Photo feedback could not read camera %s", camera, exc_info=True)
+            return
+        try:
+            score = await self.hass.async_add_executor_job(match_score, twin_png, content)
+        except Exception:
+            _LOGGER.warning("Photo feedback could not compare the snapshot", exc_info=True)
+            return
+        self.photo_match = score
+        self._publish()
+        _LOGGER.info(
+            "Photo feedback match score %.3f for pattern %s against %s",
+            score,
+            pattern_id,
+            camera,
+        )
 
     async def async_ai_draw(self, prompt: str, *, name: str | None = None, play: bool = False) -> int:
         """Ask the configured assistant for one path, then upload it."""

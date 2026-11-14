@@ -94,6 +94,9 @@
       },
       "gallery_preview": {
         "default": "mdi:image-filter-vintage"
+      },
+      "photo_preview": {
+        "default": "mdi:image-filter-frames"
       }
     },
     "switch": {
