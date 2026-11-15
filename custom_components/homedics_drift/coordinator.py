@@ -1583,6 +1583,12 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         return {
             "condition": condition,
             "high": temperature,
+            "current": (
+                float(attributes["temperature"])
+                if isinstance(attributes.get("temperature"), (int, float))
+                and not isinstance(attributes.get("temperature"), bool)
+                else None
+            ),
             "low": forecast_low(result, entity_id),
             "wind": wind,
             "probability": forecast_probability(result, entity_id),
@@ -1620,10 +1626,14 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         speed_unit = wind_threshold_unit(preference, forecast["temperature_unit"])
         options = self.config_entry.options
         try:
-            if temperature is None:
-                high = convert_temperature(forecast["high"], forecast["temperature_unit"], preference)
-            else:
+            day_high = convert_temperature(forecast["high"], forecast["temperature_unit"], preference)
+            if temperature is not None:
                 high = int(temperature)
+            elif forecast["current"] is not None:
+                # The number drawn is the temperature outside right now.
+                high = convert_temperature(forecast["current"], forecast["temperature_unit"], preference)
+            else:
+                high = day_high
             low = forecast["low"]
             low_in_unit = (
                 None
@@ -1643,7 +1653,7 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
                     condition=str(forecast["condition"]),
                     wind_speed=wind_in_unit,
                     wind_threshold=wind_threshold_value(options.get(CONF_WEATHER_WIND), speed_unit),
-                    temperature_high=float(high),
+                    temperature_high=float(day_high),
                     temperature_low=None if low_in_unit is None else float(low_in_unit),
                     hot_threshold=hot_threshold_value(options.get(CONF_WEATHER_HOT), temp_unit),
                     cold_threshold=cold_threshold_value(options.get(CONF_WEATHER_COLD), temp_unit),
