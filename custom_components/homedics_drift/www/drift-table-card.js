@@ -357,6 +357,7 @@ class DriftTableCard extends HTMLElement {
     this._styleApplied = style;
     this._built = true;
     this._points = null;
+    this._viewRotation = 0;
     this._pathFor = null;
     this._shownProgress = null;
     this._drag = null;
@@ -963,8 +964,11 @@ class DriftTableCard extends HTMLElement {
       const data = await this._hass.callApi("GET", `homedics_drift/path/${encodeURIComponent(this._deviceId)}`);
       if (this._pathFor !== patternId) return;
       this._points = data && Array.isArray(data.points) && data.points.length > 1 ? data.points : null;
+      const turn = Number(data && data.view_rotation);
+      this._viewRotation = Number.isFinite(turn) ? turn : 0;
     } catch (_err) {
       this._points = null;
+      this._viewRotation = 0;
     }
     this._paint(this._points, this._shownProgress || 0);
   }
@@ -1020,9 +1024,12 @@ class DriftTableCard extends HTMLElement {
     ctx.arc(center, center, radius, 0, Math.PI * 2);
     ctx.fill();
     if (!points || points.length < 2) return;
+    // Weather is stored turned counter-clockwise by view_rotation. Subtracting
+    // that angle matches preview.py, which rotates the PNG by -view_rotation.
+    const view = ((Number(this._viewRotation) || 0) * Math.PI) / 180;
     const plot = points.map(([theta, rho]) => [
-      center + Math.cos(theta) * rho * radius,
-      center - Math.sin(theta) * rho * radius,
+      center + Math.cos(theta - view) * rho * radius,
+      center - Math.sin(theta - view) * rho * radius,
     ]);
     const index = Math.max(0, Math.min(plot.length - 1, (percent / 100) * (plot.length - 1)));
     const cut = Math.floor(index);

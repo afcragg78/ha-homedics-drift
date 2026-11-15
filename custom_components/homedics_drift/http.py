@@ -11,7 +11,8 @@ from homeassistant.components.http import HomeAssistantView
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import device_registry as dr
 
-from .const import DOMAIN
+from .const import CONF_WEATHER_ROTATION, DOMAIN
+from .weather import WEATHER_NAME, rotation_degrees
 
 
 def coordinator_for_device(hass: HomeAssistant, device_id: str):
@@ -54,10 +55,29 @@ class DriftPathView(HomeAssistantView):
     async def get(self, request: web.Request, device_id: str) -> web.Response:
         hass: HomeAssistant = request.app["hass"]
         coordinator = coordinator_for_device(hass, device_id)
-        pattern_id = 0
-        points = None
-        if coordinator is not None and coordinator.data is not None:
-            pattern_id = int(coordinator.data.pattern_id or 0)
-            if pattern_id > 0:
-                points = coordinator.known_path(pattern_id)
-        return self.json({"pattern_id": pattern_id, "points": points})
+        return self.json(path_payload(coordinator))
+
+
+def path_payload(coordinator) -> dict[str, object]:
+    """Polar points for the pattern now on the table.
+
+    Weather is saved already turned so the digits stand upright on the sand.
+    ``view_rotation`` is that angle. The card turns the trace back by it, the
+    same way the preview rotates the picture by ``-view_rotation``.
+    """
+    pattern_id = 0
+    points = None
+    if coordinator is not None and coordinator.data is not None:
+        pattern_id = int(coordinator.data.pattern_id or 0)
+        if pattern_id > 0:
+            points = coordinator.known_path(pattern_id)
+    body: dict[str, object] = {"pattern_id": pattern_id, "points": points}
+    if (
+        coordinator is not None
+        and pattern_id > 0
+        and coordinator.library.id_for_upload_name(WEATHER_NAME) == pattern_id
+    ):
+        body["view_rotation"] = rotation_degrees(
+            coordinator.config_entry.options.get(CONF_WEATHER_ROTATION, 0)
+        )
+    return body
