@@ -26,6 +26,10 @@ def test_card_uses_theme_variables_and_optional_styles() -> None:
     for flag in ("show_now", "show_gallery", "show_create", "show_storage", "show_clean"):
         assert flag in text
     assert "path_known" in text
+    assert "view_rotation" in text
+    assert "theta - view" in text
+    init = (ROOT / "custom_components" / "homedics_drift" / "__init__.py").read_text(encoding="utf-8")
+    assert "drift-table-card.js?v=7" in init
     assert "requestAnimationFrame" in text
     assert "could not find the Drift player" in text
     assert "if (!data.entity_id && !data.device_id)" in text
