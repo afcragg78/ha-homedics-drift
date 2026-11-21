@@ -60,12 +60,14 @@ otherwise it's HoMedics Drift .txt. --rotate turns the picture to match how the 
 Digits are 0.45 radii tall for one or two digits, a little less for three.
 """
 import argparse
+import heapq
 import json
 import math
 
 STEP = 0.01     # path sampling, in table radii
 RIM = 0.96      # background rows reach this far out
 BALL = 0.07     # groove width
+CLEAR = 0.035   # fill and travel stay this far outside each outline (half a groove)
 SWEEP = 0.05    # spacing of the sweep rows above the number
 SHAPE_SWEEP = 0.04  # spacing of the spiral that sweeps each shape smooth
 
@@ -107,26 +109,26 @@ class Shape:
         self.detail = detail or (lambda phi: [])     # drawn after sweeping; starts and ends at edge(phi)
         self.rmax = max(radius(2 * math.pi * i / 720) for i in range(720))
 
-    def edge(self, phi, scale=1.0):
-        return polar(self.c, scale * self.radius(phi), phi)
+    def edge(self, phi, scale=1.0, pad=0.0):
+        return polar(self.c, scale * self.radius(phi) + pad, phi)
 
     def angle(self, p):
         return math.atan2(p[1] - self.c[1], p[0] - self.c[0])
 
-    def contains(self, p):
+    def contains(self, p, pad=0.0):
         d = math.dist(p, self.c)
-        return d < self.rmax and d < self.radius(self.angle(p))
+        return d < self.rmax + pad and d < self.radius(self.angle(p)) + pad
 
-    def walk(self, phi0, delta):
-        n = max(2, int(abs(delta) * self.rmax / STEP))
-        return [self.edge(phi0 + delta * i / n) for i in range(1, n + 1)]
+    def walk(self, phi0, delta, pad=0.0):
+        n = max(2, int(abs(delta) * (self.rmax + pad) / STEP))
+        return [self.edge(phi0 + delta * i / n, pad=pad) for i in range(1, n + 1)]
 
-    def around(self, a, b):
+    def around(self, a, b, pad=0.0):
         """Edge points from where a row enters (a) to where it leaves (b), on the row's side."""
         phi_a, phi_b = self.angle(a), self.angle(b)
         ccw = cross((b[0] - a[0], b[1] - a[1]), (self.c[0] - a[0], self.c[1] - a[1])) > 0
         delta = (phi_b - phi_a) % (2 * math.pi)
-        return self.walk(phi_a, delta if ccw else delta - 2 * math.pi)
+        return self.walk(phi_a, delta if ccw else delta - 2 * math.pi, pad)
 
     def draw(self, toward):
         """Sweep smooth from the centre out, trace the outline twice (once just inside it) so the
@@ -319,7 +321,7 @@ def sun_behind(c, cloud_shape, r_in=0.15, r_out=0.32, rays=12, disc=0.13):
                 hi = mid
             else:
                 lo = mid
-        return max(0.05, lo - 0.02)
+        return max(0.05, lo - 0.035)
 
     def snap(phi):
         return (math.floor(phi * rays / (2 * math.pi)) + 0.5) * 2 * math.pi / rays
@@ -355,7 +357,14 @@ def warning_sign(c, r=0.34):
 
 
 def band(c, w, h, waves=3.0, phase=0.0):
-    """A flat mist bank: a wide, low ellipse with a wavy edge."""
+    """A flat mist bank: a wide, low ellipse with a wavy edge.
+
+    `waves` is rounded to a whole number so the outline meets itself on the
+    negative x-axis (a non-integer count made radius(-pi) and radius(pi) differ,
+    and a fill line along that seam cut through the bank).
+    """
+    waves = max(1, int(round(waves)))
+
     def radius(phi):
         a, b = w / 2, h / 2
         base = a * b / math.hypot(b * math.cos(phi), a * math.sin(phi))
@@ -462,19 +471,249 @@ class Frame:
         right, left = rim(lo, hi), rim(math.pi - hi, math.pi - lo)
         return right + line(right[-1], left[0])[1:] + left[1:] + line(left[-1], right[0])[1:-1]
 
-    def link(self, a, b):
+    def link(self, a, b, shapes=None):
         """Points from a to b: along the edge (the short way) when both are on or just inside it,
-        round the rim when both are on it, else straight."""
+        round the rim when both are on it, else around any symbols (never straight through one)."""
+        shapes = shapes or []
+
+        def ok(pts):
+            return not any(s.contains(p, CLEAR) for p in pts for s in shapes)
+
         c = self.contour
         i, j = nearest(c, a), nearest(c, b)
         if math.dist(c[i], a) <= 0.03 and math.dist(c[j], b) <= 0.1:
             n = len(c)
             fwd = [c[(i + k) % n] for k in range((j - i) % n + 1)]
             back = [c[(i - k) % n] for k in range((i - j) % n + 1)]
-            return min(fwd, back, key=len) + [b]
+            cand = min(fwd, back, key=len) + [b]
+            if ok(cand):
+                return cand
         if abs(math.hypot(*a) - RIM) < 0.03 and abs(math.hypot(*b) - RIM) < 0.03:
-            return rim_arc(a, b)
+            cand = rim_arc(a, b)
+            if ok(cand):
+                return cand
+        return route(a, b, shapes)
+
+
+# ---------------------------------------------------------------------------------------------
+# Moves that stay outside every symbol: along an outline, or along the rim, never through one.
+
+
+def _segment_clear(a, b, shapes, pad=CLEAR, ignore=()):
+    """True if the open segment ab does not cut a symbol interior.
+
+    A shape that already contains a or b (the start just left its outline, or
+    the end is its porch) only forbids its true interior, so a short exit is
+    not treated as a hit and forced the long way around. Other shapes keep
+    the full clearance.
+    """
+    skip = set(ignore)
+    near = {s for s in shapes if s not in skip and (s.contains(a, pad) or s.contains(b, pad))}
+    n = max(1, math.ceil(math.dist(a, b) / STEP))
+    for i in range(1, n):
+        t = i / n
+        p = (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
+        for s in shapes:
+            if s in skip:
+                continue
+            if s.contains(p, 0 if s in near else pad):
+                return False
+    return True
+
+
+def _around_clear(shape, a, b, shapes, pad=CLEAR):
+    """The shorter outline walk from a to b that does not enter any other symbol, or None.
+
+    The last step to b is included only when it stays outside this shape's true
+    interior (a radial out from the padded edge is fine; a chord back through
+    the middle is not).
+    """
+    phi_a, phi_b = shape.angle(a), shape.angle(b)
+    span = (phi_b - phi_a) % (2 * math.pi)
+    choices = []
+    for delta in (span, span - 2 * math.pi):
+        if delta == 0:
+            continue
+        pts = shape.walk(phi_a, delta, pad)
+        if any(s.contains(p, pad) for p in pts for s in shapes if s is not shape):
+            continue
+        end = pts[-1] if pts else a
+        if not _segment_clear(end, b, shapes, pad, ignore=(shape,)) or not _segment_clear(end, b, [shape], pad=0):
+            continue
+        if math.dist(end, b) > STEP * 1.5:
+            pts = pts + line(end, b)[1:]
+        choices.append(pts)
+    return min(choices, key=length) if choices else None
+
+
+def route(a, b, shapes, pad=CLEAR, ignore=()):
+    """Points from a to b (not including a) that stay `pad` outside every symbol.
+
+    Prefers a straight line, then a short walk along a padded outline, then a
+    path that may hop between outlines or along the rim, so travel never cuts
+    through a cloud, sun, moon, or any other emblem.
+    """
+    bodies = [s for s in shapes if s not in set(ignore)]
+    if not bodies or _segment_clear(a, b, bodies, pad):
         return line(a, b)[1:]
+    hits = [s for s in bodies if not _segment_clear(a, b, [s], pad)]
+    if len(hits) == 1:
+        walked = _around_clear(hits[0], a, b, bodies, pad)
+        if walked is not None:
+            return walked
+
+    # Graph: endpoints, padded outline samples, and rim samples.
+    # Endpoints join an outline only along a radial, then travel on arcs, so a
+    # chord cannot cut across a flattened cloud or fog bank.
+    nodes = [a, b]
+    adj = [[], []]  # grown alongside nodes
+
+    def add(p):
+        nodes.append(p)
+        adj.append([])
+        return len(nodes) - 1
+
+    def connect(i, j, pts):
+        if i == j:
+            return
+        if not pts:
+            pts = line(nodes[i], nodes[j])[1:]
+        adj[i].append((j, length(pts) if pts else math.dist(nodes[i], nodes[j]), pts))
+
+    def arc_ok(s, pts):
+        return all(not t.contains(p, pad) for p in pts for t in bodies if t is not s)
+
+    def interior(s, p):
+        # A point on the outline can sit a hair inside from rounding; only
+        # reject a true interior, so a just-finished shape can still attach.
+        return math.dist(p, s.c) + 0.004 < s.radius(s.angle(p))
+
+    samples = 32
+    rings = []
+    for s in bodies:
+        idxs = [add(s.edge(2 * math.pi * k / samples, pad=pad)) for k in range(samples)]
+        rings.append((s, idxs))
+        for k in range(samples):
+            i, j = idxs[k], idxs[(k + 1) % samples]
+            step_pts = s.walk(2 * math.pi * k / samples, 2 * math.pi / samples, pad)
+            if arc_ok(s, step_pts):
+                connect(i, j, step_pts)
+                connect(j, i, step_pts[::-1])
+
+    def attach(end_i, s, idxs):
+        """Join an endpoint to this shape's padded outline at the same angle, then to its ring."""
+        p = nodes[end_i]
+        if interior(s, p):
+            return
+        phi = s.angle(p)
+        porch = s.edge(phi, pad=pad)
+        if not _segment_clear(p, porch, bodies, pad, ignore=(s,)):
+            return
+        porch_i = add(porch)
+        connect(end_i, porch_i, line(p, porch)[1:])
+        connect(porch_i, end_i, line(porch, p)[1:])
+        k_lo = int(math.floor((phi % (2 * math.pi)) / (2 * math.pi) * samples)) % samples
+        k_hi = (k_lo + 1) % samples
+        phi_lo = 2 * math.pi * k_lo / samples
+        d_lo = (phi - phi_lo) % (2 * math.pi)
+        d_hi = (2 * math.pi / samples) - d_lo
+        if d_lo > 1e-9:
+            pts = s.walk(phi, -d_lo, pad)
+            if arc_ok(s, pts):
+                connect(porch_i, idxs[k_lo], pts)
+                connect(idxs[k_lo], porch_i, s.walk(phi_lo, d_lo, pad))
+        if d_hi > 1e-9:
+            pts = s.walk(phi, d_hi, pad)
+            if arc_ok(s, pts):
+                connect(porch_i, idxs[k_hi], pts)
+                connect(idxs[k_hi], porch_i, s.walk(2 * math.pi * k_hi / samples, -d_hi, pad))
+
+    for s, idxs in rings:
+        attach(0, s, idxs)
+        attach(1, s, idxs)
+
+    rim_idx = []
+    for k in range(samples):
+        p = polar((0, 0), RIM, 2 * math.pi * k / samples)
+        if any(s.contains(p, pad) for s in bodies):
+            rim_idx.append(None)
+        else:
+            rim_idx.append(add(p))
+    for k in range(samples):
+        i, j = rim_idx[k], rim_idx[(k + 1) % samples]
+        if i is None or j is None:
+            continue
+        pts = rim_arc(nodes[i], nodes[j])
+        if all(not s.contains(p, pad) for p in pts for s in bodies):
+            connect(i, j, pts)
+            connect(j, i, rim_arc(nodes[j], nodes[i]))
+
+    # Endpoints and outline points may go straight to a clear rim point; outline
+    # points on different shapes may hop if the hop stays outside every symbol.
+    def try_straight(i, j):
+        if i == j or not _segment_clear(nodes[i], nodes[j], bodies, pad):
+            return
+        connect(i, j, line(nodes[i], nodes[j])[1:])
+
+    try_straight(0, 1)
+    try_straight(1, 0)
+    for i in rim_idx:
+        if i is None:
+            continue
+        try_straight(0, i)
+        try_straight(i, 0)
+        try_straight(1, i)
+        try_straight(i, 1)
+    # Hops between different rings, but never a chord of the same ring.
+    for u, (s, sidx) in enumerate(rings):
+        for v, (t, tidx) in enumerate(rings):
+            if v <= u:
+                continue
+            for i in sidx:
+                for j in tidx:
+                    if math.dist(nodes[i], nodes[j]) < 0.22:
+                        try_straight(i, j)
+                        try_straight(j, i)
+
+    dist, prev = [math.inf] * len(nodes), [None] * len(nodes)
+    dist[0] = 0.0
+    heap = [(0.0, 0)]
+    while heap:
+        d, i = heapq.heappop(heap)
+        if d > dist[i]:
+            continue
+        if i == 1:
+            break
+        for j, cost, pts in adj[i]:
+            nd = d + cost
+            if nd < dist[j]:
+                dist[j] = nd
+                prev[j] = (i, pts)
+                heapq.heappush(heap, (nd, j))
+    if prev[1] is not None:
+        chunks, cur = [], 1
+        while cur != 0:
+            i, pts = prev[cur]
+            chunks.append(pts)
+            cur = i
+        out = []
+        for pts in reversed(chunks):
+            out += pts
+        if not out or math.dist(out[-1], b) > 1e-9:
+            out += [b]
+        return out
+
+    if hits:
+        walked = _around_clear(hits[0], a, b, bodies, pad)
+        if walked is not None:
+            return walked
+    return line(a, b)[1:]
+
+
+def enter(shape, a, shapes, pad=CLEAR):
+    """Travel around every symbol to its padded edge, then in along a radius to its centre."""
+    porch = shape.edge(shape.angle(a), pad=pad)
+    return route(a, porch, shapes, pad=pad) + line(porch, shape.c)[1:]
 
 
 # ---------------------------------------------------------------------------------------------
@@ -506,12 +745,21 @@ def ring_rows(c, r0, spacing):
 
 
 def flow(row, closed, shapes, frame):
-    """Split a row into runs inside the frame; where it crosses a shape, go round the edge instead."""
+    """Split a row into runs inside the frame; where it crosses a shape, go round the edge instead.
+
+    A clearance of CLEAR is kept, so the ball's groove does not bite into the outline.
+    Closed rings that never leave the frame still open at a free point so they can
+    be clipped; they used to be returned whole and would cut any symbol they crossed.
+    Consecutive shapes are treated as one obstacle, so the detour goes around the
+    cluster rather than straight through the next one.
+    """
     if closed:
-        out = next((i for i, p in enumerate(row) if not frame.contains(p)), None)
-        if out is None:
-            return [row]
-        row = row[out:] + row[1:out + 1]
+        def free(p):
+            return frame.contains(p) and not any(s.contains(p, CLEAR) for s in shapes)
+        start = next((i for i, p in enumerate(row) if free(p)), None)
+        if start is None:
+            return []
+        row = row[start:] + row[1:start + 1]
     runs, run, inside = [], [], None
     for p in row:
         if not frame.contains(p):
@@ -519,11 +767,12 @@ def flow(row, closed, shapes, frame):
                 runs.append(run)
             run, inside = [], None
             continue
-        hit = next((s for s in shapes if s.contains(p)), None)
+        hit = next((s for s in shapes if s.contains(p, CLEAR)), None)
         if inside is None and hit is not None:
-            inside = (hit, run[-1] if run else p)
-        elif inside is not None and hit is not inside[0]:
-            run += inside[0].around(inside[1], p)
+            inside = (hit, run[-1] if run else None)
+        elif inside is not None and hit is None:
+            if inside[1] is not None:
+                run += route(inside[1], p, shapes)
             inside = None
         if inside is None:
             run.append(p)
@@ -544,7 +793,7 @@ def background(path, rows, shapes, frame):
         elif math.dist(here, runs[-1][-1]) < math.dist(here, runs[0][0]):
             runs = [r[::-1] for r in runs[::-1]]
         for r in runs:
-            path += frame.link(path[-1], r[0]) + r
+            path += frame.link(path[-1], r[0], shapes) + r
     return path
 
 
@@ -748,7 +997,7 @@ def scene(name):
         # Sun first, cloud second, so the cloud's sweep covers the rays it cuts off.
         cover = cloud((0.26, -0.30), 0.76, 0.30, lobes=3, phase=0.7)
         day = sun_behind((-0.22, -0.42), cover)
-        return [day, cover], [(ring_rows(day.c, day.rmax + 0.05, 0.09), Frame())]
+        return [day, cover], [(ring_rows(day.c, day.rmax + 0.05, 0.11), Frame())]
     if name == "clear_night":
         moon = crescent((-0.02, -0.42), scale=0.90, tilt=0.65)
         stars = [
@@ -994,7 +1243,8 @@ def _side_gusts():
 
 
 def _draw_shapes(shapes, leave=None):
-    """Sweep and outline shapes, with no full-table background. Links end inside the next shape."""
+    """Sweep and outline shapes, with no full-table background. Links go around outlines,
+    then in along a radius, so the move never cuts a symbol open."""
     path = []
     for index, shape in enumerate(shapes):
         if index + 1 < len(shapes):
@@ -1004,7 +1254,7 @@ def _draw_shapes(shapes, leave=None):
         else:
             nxt = (shape.c[0] + 0.3, shape.c[1])
         if path:
-            path += line(path[-1], shape.c)[1:]
+            path += enter(shape, path[-1], shapes)
         path += shape.draw(nxt)
     return path
 
@@ -1031,7 +1281,7 @@ def _sunny_emblem():
     dx, dy = tip[0] - center[0], tip[1] - center[1]
     span = dx * dx + dy * dy
     if span < 1e-8:
-        return path
+        return path, [day]
     # The ray from the sun's centre through the tip, continued to the table edge.
     beam = 2 * (center[0] * dx + center[1] * dy)
     rest = center[0] * center[0] + center[1] * center[1] - RIM * RIM
@@ -1039,23 +1289,26 @@ def _sunny_emblem():
     reach = max((-beam + root) / (2 * span), (-beam - root) / (2 * span))
     if reach > 1.02:
         path += line(tip, (center[0] + reach * dx, center[1] + reach * dy))[1:]
-    return path
+    return path, [day]
 
 
 def _emblem(name):
-    """The day's symbol on the left. The path ends on the left rim, so gusts join along the edge."""
+    """The day's symbol on the left. The path ends on the left rim, so gusts join along the edge.
+
+    Returns (path, shapes) so the join to the rim can go around the emblems.
+    """
     if name == "sunny":
         return _sunny_emblem()
     if name == "hot":
         bulb_r, bulb_y = 0.15, -0.56
         return _thermometer(
             _park(bulb_y, bulb_r), bulb_y, bulb_r, column_top=-0.16, heat=True, finish="left"
-        )
+        ), []
     if name == "cold":
         bulb_r, bulb_y = 0.14, -0.58
         return _thermometer(
             _park(bulb_y, bulb_r), bulb_y, bulb_r, column_top=-0.46, spark=0.09, finish="left"
-        )
+        ), []
     if name == "alert":
         radius = 0.28
         ang = math.radians(210)  # the left corner
@@ -1064,7 +1317,7 @@ def _emblem(name):
         cx = _park(cy + vy, 0) - radius * math.cos(ang)
         sign = warning_sign((cx, cy), radius)
         drawn = sign.draw(polar((cx, cy), 1, ang))
-        return drawn + drawn[::-1][1:] + drawn[1:]
+        return drawn + drawn[::-1][1:] + drawn[1:], [sign]
 
     if name == "rain":
         cy, reach, w, h = -0.30, 0.26, 0.52, 0.20
@@ -1124,12 +1377,12 @@ def _emblem(name):
         cy, reach = -0.36, 0.24
         cx = _park(cy, reach)
         shapes = [cloud((cx, cy), 0.48, 0.18)]
-    return _draw_shapes(shapes, leave=(shapes[-1].c[0] - 1.5, shapes[-1].c[1]))
+    return _draw_shapes(shapes, leave=(shapes[-1].c[0] - 1.5, shapes[-1].c[1])), shapes
 
 
 def combined_picture(base):
     """Symbol on the left, gusts on the right, joined only along the table edge."""
-    symbol = _emblem(base)
+    symbol, shapes = _emblem(base)
     gusts = _side_gusts()
     if not symbol:
         return gusts
@@ -1137,7 +1390,7 @@ def combined_picture(base):
     radius = math.hypot(*end) or 1.0
     if abs(radius - RIM) > 0.004:
         rim = (end[0] / radius * RIM, end[1] / radius * RIM)
-        symbol = symbol + line(end, rim)[1:]
+        symbol = symbol + route(end, rim, shapes)
         end = rim
     return symbol + rim_arc(end, gusts[0]) + gusts
 
@@ -1291,36 +1544,29 @@ def build(condition, value):
     for i, s in enumerate(shapes):
         nxt = shapes[i + 1].c if i + 1 < len(shapes) else rows[0][0][0]
         if path:
-            path += transit(path[-1], s.c, rows)
+            path += transit(path[-1], s, rows, shapes)
         path += s.draw(nxt)
     row, closed = rows[0]
     if not closed:
-        path += out_to_rim(path[-1], row)
+        path += out_to_rim(path[-1], row, shapes)
     for rows, frame in passes:
         path = background(path, rows, shapes, frame)
     text, cap = panel(value)
     return path + rim_arc(path[-1], text[0]) + text, cap
 
 
-def transit(a, b, rows):
-    """A move between shapes that the background will wipe out: square across the rows onto the
-    nearest one, along it (the row is drawn right over it later), then square across again."""
-    row, closed = rows[0]
-    if closed:
-        return line(a, b)[1:]
-    d = (row[-1][0] - row[0][0], row[-1][1] - row[0][1])
-    n = (-d[1] / math.hypot(*d), d[0] / math.hypot(*d))
-    across = lambda p: p[0] * n[0] + p[1] * n[1]
-    mid = (across(a) + across(b)) / 2
-    t = min((across(r[len(r) // 2]) for r, _ in rows), key=lambda o: abs(o - mid))
-    a1 = (a[0] + (t - across(a)) * n[0], a[1] + (t - across(a)) * n[1])
-    b1 = (b[0] + (t - across(b)) * n[0], b[1] + (t - across(b)) * n[1])
-    return line(a, a1)[1:] + line(a1, b1)[1:] + line(b1, b)[1:]
+def transit(a, dest, rows, shapes):
+    """A move to the next shape that goes around every outline, then in along a radius.
+
+    The background used to be asked to wipe a straight cut across a symbol; that
+    cut stayed visible whenever the later rows went around the symbol instead.
+    """
+    return enter(dest, a, shapes)
 
 
-def out_to_rim(a, row):
-    """From the last shape straight out to the rim, square to the background rows (so they wipe
-    the move out) and toward the side where the first row is."""
+def out_to_rim(a, row, shapes):
+    """From the last shape out to the rim, square to the background rows when that
+    is clear, otherwise around any symbol that the straight move would cut."""
     d = (row[-1][0] - row[0][0], row[-1][1] - row[0][1])
     n = math.hypot(*d)
     normal = (-d[1] / n, d[0] / n)
@@ -1329,7 +1575,8 @@ def out_to_rim(a, row):
     u = (sign * normal[0], sign * normal[1])
     b = a[0] * u[0] + a[1] * u[1]                     # solve |a + t u| = RIM for t > 0
     t = -b + math.sqrt(b * b - (a[0] ** 2 + a[1] ** 2 - RIM ** 2))
-    return line(a, (a[0] + t * u[0], a[1] + t * u[1]))[1:]
+    target = (a[0] + t * u[0], a[1] + t * u[1])
+    return route(a, target, shapes)
 
 
 # ---------------------------------------------------------------------------------------------

@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.6
+
+- Weather drawings no longer cut through the symbols. The fill and the ball's travel stay outside each outline, the path goes around the shapes, fog bands use whole waves, and the partly-cloudy ripples sit a little farther apart.
+
 ## 1.4.2
 
 - Wind is four long wavy lines under the temperature, evenly spaced, each ending in a large round curl. The upper curls roll up and the bottom curl rolls down. A combined picture keeps the symbol on the left and puts three curled gusts on the right. The curls are about one and a half times the earlier size, and on a sunny gust picture the ball leaves along a ray instead of cutting across the sun.
