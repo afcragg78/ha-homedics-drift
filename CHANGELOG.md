@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.4.11
+
+- Weather and Auto Weather again upload, then start Clean, then play, the same order that worked in 1.4.6 while a playlist was running. The integration no longer waits for the table to go idle, and it no longer sends play/pause before an upload. That command is a toggle and could resume the playlist instead of starting Clean.
+- After sending Clean, the integration waits up to 20 seconds for the table to report the clean pattern, and resends the draw once if needed. If Clean still does not start, it logs a warning and plays the weather picture instead of waiting 20 minutes. Playing weather is confirmed the same way, with one retry.
+- The 280-page weather cap, the 4-second settle after a large upload, trailing or missing page resends, the link wait, clear errors, and the Preferred Bluetooth Adapter option are unchanged.
+
+
 ## 1.4.10
 
 - Before a pattern upload, the integration pauses the table with the same play/pause command the player already uses, then waits a few seconds for the ball to stop. A stored playlist that keeps drawing no longer blocks Weather or other uploads by waiting for the table to go idle on its own.

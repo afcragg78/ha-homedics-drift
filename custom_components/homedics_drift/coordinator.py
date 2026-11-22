@@ -57,10 +57,8 @@ from .const import (
     UPLOAD_SETTLE_SECONDS,
     WEATHER_MAX_POINTS,
     WRITE_UUID,
-    should_pause_for_upload,
+    draw_with_confirm,
     store_confirm_timeout,
-    wait_for_pause_to_take,
-    UploadPauseAborted,
 )
 from .drawing import (
     build_instructions,
@@ -215,6 +213,8 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         self.preview_at: datetime | None = None
         self._inbox_unsub: Any = None
         self._seen_pattern_id: int | None = None
+        self._reported_pattern_id: int | None = None
+        self._state_report_seq = 0
         self._clean_follow = 0
         self.stop_after = StopAfterWatch()
         self.ai_prompt = ""
@@ -559,6 +559,8 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
             self._notices.put_nowait(message)
         if message.kind is Kind.STATE and message.state is not None:
             self._apply_lamp_report(message.state, message.state.brightness)
+            self._reported_pattern_id = message.state.pattern_id
+            self._state_report_seq += 1
             if message.state.pattern_id != self._seen_pattern_id:
                 self._seen_pattern_id = message.state.pattern_id
                 self.preview_at = datetime.now(timezone.utc)
@@ -976,21 +978,20 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
     async def async_select_pattern(self, label: str) -> None:
         """Play one stored pattern. This does not change the power switch."""
         self.authorize_stop_after(2 if self.library.clean_before else 1)
-        self._require_awake()
-        pattern_id = None
-        for choice, stored in self.pattern_choices():
-            if choice == label:
-                pattern_id = stored
-                break
-        if pattern_id is None:
-            raise HomeAssistantError(f"Unknown Drift pattern: {label}")
-        clean_id = None
-        if self.library.clean_before:
-            clean_id = await self._ensure_clean_id()
-            if not self.session_on:
-                return
         async with self._command_lock:
             self._require_awake()
+            pattern_id = None
+            for choice, stored in self.pattern_choices():
+                if choice == label:
+                    pattern_id = stored
+                    break
+            if pattern_id is None:
+                raise HomeAssistantError(f"Unknown Drift pattern: {label}")
+            clean_id = None
+            if self.library.clean_before:
+                clean_id = await self._ensure_clean_id()
+                if not self.session_on:
+                    return
             order = clean_play_order(
                 pattern_id, clean_id, clean_before=self.library.clean_before
             )
@@ -1128,7 +1129,6 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
             raise HomeAssistantError(err.message) from err
         await self._async_wait_for_link()
         async with self._command_lock:
-            await self._async_pause_for_upload()
             playing = self.data.pattern_id if self.data is not None else None
             if replace_idle and (self.data is None or not self.data.drawing):
                 playing = None
@@ -1188,38 +1188,55 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
             self._ask_reconnect()
             raise HomeAssistantError(DISCONNECTED_MESSAGE)
 
-    def _table_is_moving(self) -> bool:
-        """True when the ball is still traveling, not paused at the end of a design."""
-        data = self.data
-        if data is None:
-            return False
-        return should_pause_for_upload(drawing=bool(data.drawing), progress=data.progress)
+    async def _async_draw_and_confirm(self, pattern_id: int) -> bool:
+        """Send draw_pattern and wait for the table to report that id.
 
-    async def _async_pause_for_upload(self) -> None:
-        """Pause a running pattern or playlist, then wait briefly for the ball to stop.
-
-        The table often loops a stored playlist, so it is never naturally idle.
-        ``play_pause`` is a toggle: only send it when the ball is actually moving.
-        Caller holds the command lock.
+        The command is resent once if the table does not switch in time.
+        Local optimistic status is not treated as confirmation.
         """
-        if not self._table_is_moving():
-            return
-        if self._shut_down:
-            raise HomeAssistantError(DISCONNECTED_MESSAGE)
-        if not self.session_on:
-            raise HomeAssistantError("Drift power is off")
-        await self.async_send(play_pause())
-        self._replace(status=0)
-        try:
-            await wait_for_pause_to_take(
-                is_moving=self._table_is_moving,
-                is_shut_down=lambda: self._shut_down,
-                is_powered=lambda: self.session_on,
-            )
-        except UploadPauseAborted as err:
-            if err.reason == "disconnected":
-                raise HomeAssistantError(DISCONNECTED_MESSAGE) from err
-            raise HomeAssistantError("Drift power is off") from err
+
+        async def _send() -> None:
+            if not self.session_on:
+                return
+            await self.async_send(draw_pattern(pattern_id))
+            self._replace(pattern_id=pattern_id, status=1)
+
+        async def _locked_send() -> None:
+            async with self._command_lock:
+                await _send()
+
+        return await draw_with_confirm(
+            send=_locked_send,
+            reported_id=lambda: self._reported_pattern_id,
+            pattern_id=pattern_id,
+            report_seq=lambda: self._state_report_seq,
+        )
+
+    async def _async_clean_then_play(
+        self,
+        pattern_id: int,
+        clean_id: int,
+        *,
+        authorize_two: bool = False,
+    ) -> bool:
+        """Play clean if the table starts it, otherwise play the new pattern now."""
+        if authorize_two:
+            self.authorize_stop_after(2)
+        self._clean_follow += 1
+        token = self._clean_follow
+        if await self._async_draw_and_confirm(clean_id):
+            if await self._wait_until_clean_done(token, clean_id):
+                return await self._play_if_on(
+                    pattern_id, True, grant=not authorize_two, confirm=True
+                )
+            self.stop_after.grants = 0
+            return False
+        _LOGGER.warning(
+            "Drift clean pattern %s did not start; playing the new pattern without a wipe",
+            clean_id,
+        )
+        self.stop_after.grants = 0
+        return await self._play_if_on(pattern_id, True, grant=True, confirm=True)
 
     async def _transfer(
         self,
@@ -1328,8 +1345,10 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         ]
         return find_stock_clean(lists, self.library.names(), set(self.patterns.pattern_ids))
 
-    def _ready_clean_id(self) -> int | None:
-        """A stored clean pattern that can be played without uploading."""
+    async def _ensure_clean_id(self) -> int:
+        """Stock clean pattern, or one tight spiral uploaded once and kept."""
+        if not self.session_on:
+            raise HomeAssistantError("Drift power is off")
         stock = self._stock_clean_id()
         if stock is not None:
             return stock
@@ -1338,16 +1357,10 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         existing = self.library.protected_clean_id()
         if existing is not None and existing in stored and existing != playing:
             return existing
-        return None
-
-    async def _upload_clean_spiral(self) -> int:
-        """Send the protected clean spiral. Caller holds the command lock."""
-        playing = self.data.pattern_id if self.data is not None else None
-        stored = set(self.patterns.pattern_ids)
-        existing = self.library.protected_clean_id()
         pattern_id = choose_clean_upload_id(stored, playing, existing)
         points = cleaning_spiral()
         pages = paginate([wire_point(theta, rho) for theta, rho in points])
+        await self._async_wait_for_link()
         await self._transfer(pattern_id, pages)
         text = spiral_thr(points)
         self.library.remember(pattern_id, "Clean", text, protected=True)
@@ -1367,37 +1380,18 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         self._publish()
         return pattern_id
 
-    async def _ensure_clean_id(self) -> int:
-        """Stock clean pattern, or one tight spiral uploaded once and kept.
-
-        When a spiral must be uploaded, pause a running playlist first so the
-        table is still, then send the file.
-        """
-        if not self.session_on:
-            raise HomeAssistantError("Drift power is off")
-        ready = self._ready_clean_id()
-        if ready is not None:
-            return ready
-        await self._async_wait_for_link()
-        async with self._command_lock:
-            if not self.session_on:
-                raise HomeAssistantError("Drift power is off")
-            ready = self._ready_clean_id()
-            if ready is not None:
-                return ready
-            await self._async_pause_for_upload()
-            return await self._upload_clean_spiral()
-
     async def async_clean_sand(self) -> None:
         """Play the clean pattern. Power stays wherever the switch left it."""
         self.authorize_stop_after()
         if not self.session_on:
             raise HomeAssistantError("Drift power is off")
-        pattern_id = await self._ensure_clean_id()
         async with self._command_lock:
             if not self.session_on:
                 return
             self._clean_follow += 1
+            pattern_id = await self._ensure_clean_id()
+            if not self.session_on:
+                return
             await self.async_send(draw_pattern(pattern_id))
             self._replace(pattern_id=pattern_id, status=1)
 
@@ -1894,21 +1888,13 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
                 if self.session_on and clean_id != pattern_id:
                     # Two pattern changes: the wipe, then Weather. Stop after
                     # pauses when Weather finishes, not when the wipe does.
-                    self.authorize_stop_after(2)
-                    self._clean_follow += 1
-                    token = self._clean_follow
-                    async with self._command_lock:
-                        if self.session_on:
-                            await self.async_send(draw_pattern(clean_id))
-                            self._replace(pattern_id=clean_id, status=1)
-                    if await self._wait_until_clean_done(token, clean_id):
-                        playing = await self._play_if_on(pattern_id, True, grant=False)
-                    else:
-                        self.stop_after.grants = 0
+                    playing = await self._async_clean_then_play(
+                        pattern_id, clean_id, authorize_two=True
+                    )
                 else:
-                    playing = await self._play_if_on(pattern_id, True)
+                    playing = await self._play_if_on(pattern_id, True, confirm=True)
             else:
-                playing = await self._play_if_on(pattern_id, play)
+                playing = await self._play_if_on(pattern_id, play, confirm=True)
             detail = "" if playing or not play else "Power is off, so the pattern was saved but not played"
             self._set_ai("stored", detail=detail, name=WEATHER_NAME, pattern_id=pattern_id)
             self._announce(
@@ -2211,21 +2197,13 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
                 self._announce("cleaning", prompt=prompt, name=title)
                 clean_id = await self._ensure_clean_id()
                 if self.session_on and clean_id != pattern_id:
-                    self.authorize_stop_after(2)
-                    self._clean_follow += 1
-                    token = self._clean_follow
-                    async with self._command_lock:
-                        if self.session_on:
-                            await self.async_send(draw_pattern(clean_id))
-                            self._replace(pattern_id=clean_id, status=1)
-                    if await self._wait_until_clean_done(token, clean_id):
-                        playing = await self._play_if_on(pattern_id, True, grant=False)
-                    else:
-                        self.stop_after.grants = 0
+                    playing = await self._async_clean_then_play(
+                        pattern_id, clean_id, authorize_two=True
+                    )
                 else:
-                    playing = await self._play_if_on(pattern_id, True)
+                    playing = await self._play_if_on(pattern_id, True, confirm=True)
             else:
-                playing = await self._play_if_on(pattern_id, play)
+                playing = await self._play_if_on(pattern_id, play, confirm=True)
             if playing and png:
                 self._schedule_photo_feedback(pattern_id, png)
             detail = "" if playing or not play else "Power is off, so the pattern was saved but not played"
@@ -2335,18 +2313,11 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
                 )
                 clean_id = await self._ensure_clean_id()
                 if self.session_on and clean_id != pattern_id:
-                    self._clean_follow += 1
-                    token = self._clean_follow
-                    async with self._command_lock:
-                        if self.session_on:
-                            await self.async_send(draw_pattern(clean_id))
-                            self._replace(pattern_id=clean_id, status=1)
-                    if await self._wait_until_clean_done(token, clean_id):
-                        playing = await self._play_if_on(pattern_id, True)
+                    playing = await self._async_clean_then_play(pattern_id, clean_id)
                 else:
-                    playing = await self._play_if_on(pattern_id, True)
+                    playing = await self._play_if_on(pattern_id, True, confirm=True)
             else:
-                playing = await self._play_if_on(pattern_id, play)
+                playing = await self._play_if_on(pattern_id, play, confirm=True)
             detail = "" if playing or not play else "Power is off, so the pattern was saved but not played"
             self._set_ai("stored", detail=detail, name=title, pattern_id=pattern_id)
             self._announce("done", name=title, playing=playing, prompt=cleaned, assistant=assistant)
@@ -2358,12 +2329,27 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         finally:
             self._draw_active = False
 
-    async def _play_if_on(self, pattern_id: int, play: bool, *, grant: bool = True) -> bool:
+    async def _play_if_on(
+        self,
+        pattern_id: int,
+        play: bool,
+        *,
+        grant: bool = True,
+        confirm: bool = False,
+    ) -> bool:
         """Start the pattern only while Power is already on."""
         if not play or not self.session_on:
             return False
         if grant:
             self.authorize_stop_after()
+        if confirm:
+            started = await self._async_draw_and_confirm(pattern_id)
+            if not started:
+                _LOGGER.warning(
+                    "Drift pattern %s did not start after a retry",
+                    pattern_id,
+                )
+            return started
         async with self._command_lock:
             if not self.session_on:
                 return False
@@ -2535,18 +2521,11 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
                 self._announce("cleaning", name=name)
                 clean_id = await self._ensure_clean_id()
                 if self.session_on and clean_id != pattern_id:
-                    self._clean_follow += 1
-                    token = self._clean_follow
-                    async with self._command_lock:
-                        if self.session_on:
-                            await self.async_send(draw_pattern(clean_id))
-                            self._replace(pattern_id=clean_id, status=1)
-                    if await self._wait_until_clean_done(token, clean_id):
-                        playing = await self._play_if_on(pattern_id, True)
+                    playing = await self._async_clean_then_play(pattern_id, clean_id)
                 else:
-                    playing = await self._play_if_on(pattern_id, True)
+                    playing = await self._play_if_on(pattern_id, True, confirm=True)
             else:
-                playing = await self._play_if_on(pattern_id, play)
+                playing = await self._play_if_on(pattern_id, play, confirm=True)
             self._announce("done", name=name, playing=playing)
             return pattern_id
         except HomeAssistantError as err:
