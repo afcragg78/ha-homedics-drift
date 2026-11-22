@@ -14,6 +14,12 @@ MANUFACTURER: Final = "HoMedics"
 MODEL: Final = "Drift ST-300/ST-400"
 
 READY_TIMEOUT: Final = 30.0
+# Wait this long for a connected link and a finished handshake before an upload.
+UPLOAD_LINK_WAIT: Final = 30.0
+# UPLOAD_STORED wait: 15s, plus 0.1s per page, never more than 60s.
+UPLOAD_STORE_TIMEOUT: Final = 15.0
+UPLOAD_STORE_TIMEOUT_PER_PAGE: Final = 0.1
+UPLOAD_STORE_TIMEOUT_MAX: Final = 60.0
 BACKOFF_START: Final = 2.0
 BACKOFF_MAX: Final = 60.0
 # Rapid power taps become one absolute write of the last requested value.
@@ -33,3 +39,15 @@ CONF_WEATHER_COLD: Final = "weather_cold_threshold"
 CONF_WEATHER_HEAVY: Final = "weather_heavy_probability"
 CONF_WEATHER_ALERT: Final = "weather_alert_entity"
 CONF_PHOTO_CAMERA: Final = "photo_feedback_camera"
+
+def store_confirm_timeout(page_count: int) -> float:
+    """Seconds to wait for the table to confirm a stored pattern.
+
+    Larger drawings get more time after the last page is sent, up to
+    ``UPLOAD_STORE_TIMEOUT_MAX``.
+    """
+    pages = max(0, int(page_count))
+    return min(
+        UPLOAD_STORE_TIMEOUT_MAX,
+        UPLOAD_STORE_TIMEOUT + UPLOAD_STORE_TIMEOUT_PER_PAGE * pages,
+    )

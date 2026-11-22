@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.7
+
+- Pattern uploads wait for the table to be connected and to finish its handshake, then retry if it is slow to confirm the pattern was stored. Larger drawings get a longer wait, up to a minute. The error is always a clear sentence, not a blank popup.
+
 ## 1.4.6
 
 - Weather drawings no longer cut through the symbols. The fill and the ball's travel stay outside each outline, the path goes around the shapes, fog bands use whole waves, and the partly-cloudy ripples sit a little farther apart.

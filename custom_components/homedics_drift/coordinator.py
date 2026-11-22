@@ -51,7 +51,9 @@ from .const import (
     NOTIFY_UUID,
     POWER_DEBOUNCE,
     READY_TIMEOUT,
+    UPLOAD_LINK_WAIT,
     WRITE_UUID,
+    store_confirm_timeout,
 )
 from .drawing import (
     build_instructions,
@@ -1102,6 +1104,29 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
             await self._scan_inbox(None)
             return pattern_id
 
+    async def _async_wait_for_link(self, timeout: float = UPLOAD_LINK_WAIT) -> None:
+        """Wait until the table is connected and the handshake has finished."""
+        if self._shut_down:
+            raise HomeAssistantError(DISCONNECTED_MESSAGE)
+        if (
+            self._watch.connected
+            and self._ready.is_set()
+            and self._client is not None
+            and self._out is not None
+        ):
+            return
+        if not self._watch.connected:
+            self._ask_reconnect()
+        try:
+            await asyncio.wait_for(self._ready.wait(), timeout)
+        except TimeoutError:
+            if not self._watch.connected or self._client is None or self._out is None:
+                raise HomeAssistantError(DISCONNECTED_MESSAGE) from None
+            raise HomeAssistantError("Drift table has not finished its handshake") from None
+        if self._shut_down or not self._watch.connected or self._client is None or self._out is None:
+            self._ask_reconnect()
+            raise HomeAssistantError(DISCONNECTED_MESSAGE)
+
     async def _transfer(
         self,
         pattern_id: int,
@@ -1113,6 +1138,8 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         If the transfer stops after start, one end packet is sent so the table
         can close the file instead of sitting in an open upload.
         """
+        await self._async_wait_for_link()
+        confirm_timeout = store_confirm_timeout(len(pages))
         started = False
         stored = False
         ended = False
@@ -1150,14 +1177,23 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
                 await asyncio.sleep(delay)
                 await self.async_send(end_upload(pattern_id, len(pages)))
                 ended = True
-                message = await self._wait_notice(
-                    15.0,
-                    lambda notice: (
-                        notice.kind in (Kind.UPLOAD_STORED, Kind.UPLOAD_FAILED, Kind.NO_STORAGE)
-                        and notice.pattern_id == pattern_id
+                try:
+                    message = await self._wait_notice(
+                        confirm_timeout,
+                        lambda notice: (
+                            notice.kind in (Kind.UPLOAD_STORED, Kind.UPLOAD_FAILED, Kind.NO_STORAGE)
+                            and notice.pattern_id == pattern_id
+                        )
+                        or notice.kind is Kind.UPLOAD_MISSING,
                     )
-                    or notice.kind is Kind.UPLOAD_MISSING,
-                )
+                except TimeoutError:
+                    if attempt == 6:
+                        raise HomeAssistantError(
+                            "The table did not confirm the pattern was stored"
+                        ) from None
+                    pending = list(range(len(pages)))
+                    delay = 0.2
+                    continue
                 if message.kind is Kind.UPLOAD_STORED:
                     stored = True
                     return
@@ -1168,6 +1204,8 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
                 pending = resend_indexes(len(pages), list(message.pages or []), attempt)
                 delay = 0.2
             raise HomeAssistantError("The table did not confirm the pattern was stored")
+        except TimeoutError:
+            raise HomeAssistantError("The table did not confirm the pattern was stored") from None
         finally:
             if started and not stored and not ended:
                 with contextlib.suppress(Exception):
