@@ -36,6 +36,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .const import (
     BACKOFF_START,
     CONF_AI_TASK_ENTITY,
+    CONF_PREFERRED_ADAPTER,
     CONF_CLEAN_BEFORE_AI,
     CONF_CONVERSATION_AGENT,
     CONF_WEATHER_ALERT,
@@ -92,6 +93,11 @@ from .patterns import (
     spiral_thr,
     thr_to_wire,
     wire_point,
+)
+from .preferred_adapter import (
+    PREFERRED_ADAPTER_AUTO,
+    ble_device_for_preferred_adapter,
+    preferred_adapter_value,
 )
 from .preview import render_thr
 from .reconnect import DISCONNECTED_MESSAGE, LinkWatch
@@ -380,10 +386,50 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         """True while the GATT link for this table is up."""
         return self._watch.connected
 
-    async def _session(self) -> None:
-        device = bluetooth.async_ble_device_from_address(
+    def _preferred_adapter(self) -> str:
+        """Configured scanner source, or Automatic."""
+        return preferred_adapter_value(
+            self.config_entry.options.get(CONF_PREFERRED_ADAPTER)
+        )
+
+    def _resolve_ble_device(self) -> BLEDevice | None:
+        """The table's BLEDevice, pinned to a preferred adapter when one is set.
+
+        Automatic uses Home Assistant's usual scanner choice. A preferred
+        adapter is used only when that scanner can currently see the table;
+        there is no silent fallback to another radio.
+        """
+        preferred = self._preferred_adapter()
+        if preferred == PREFERRED_ADAPTER_AUTO:
+            return bluetooth.async_ble_device_from_address(
+                self.hass, self.address, connectable=True
+            )
+        seen = bluetooth.async_scanner_devices_by_address(
             self.hass, self.address, connectable=True
         )
+        paths = [
+            (
+                str(getattr(getattr(item, "scanner", None), "source", "") or ""),
+                item.ble_device,
+            )
+            for item in seen
+        ]
+        device = ble_device_for_preferred_adapter(preferred, paths)
+        if device is None:
+            _LOGGER.error(
+                "Drift %s is not visible to the preferred Bluetooth adapter %s",
+                self.address,
+                preferred,
+            )
+            raise HomeAssistantError(
+                "The table is not visible to the preferred Bluetooth adapter "
+                f"({preferred}). Choose Automatic, or pick an adapter that can "
+                "see the table."
+            )
+        return device
+
+    async def _session(self) -> None:
+        device = self._resolve_ble_device()
         if device is None:
             raise ConnectionError(
                 f"{self.address} is not visible to a Bluetooth adapter or proxy"
@@ -423,9 +469,7 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
             await self._quiet_disconnect(client)
 
     def _fresh_device(self) -> BLEDevice:
-        device = bluetooth.async_ble_device_from_address(
-            self.hass, self.address, connectable=True
-        )
+        device = self._resolve_ble_device()
         if device is not None:
             self._device = device
         if self._device is None:

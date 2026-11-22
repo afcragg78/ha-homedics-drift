@@ -25,6 +25,7 @@ BACKOFF_MAX: Final = 60.0
 # Rapid power taps become one absolute write of the last requested value.
 POWER_DEBOUNCE: Final = 0.2
 
+CONF_PREFERRED_ADAPTER: Final = "preferred_bluetooth_adapter"
 CONF_AI_TASK_ENTITY: Final = "ai_task_entity"
 CONF_CONVERSATION_AGENT: Final = "conversation_agent"
 CONF_CLEAN_BEFORE_AI: Final = "clean_before_ai"

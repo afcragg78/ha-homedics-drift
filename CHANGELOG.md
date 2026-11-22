@@ -1,5 +1,9 @@
 # Changelog
 
+## 1.4.8
+
+- Configure has a Preferred Bluetooth Adapter option. Automatic (the default) leaves the radio choice to Home Assistant, the same as before. Pick a specific connectable adapter or proxy, such as a USB dongle, to always connect the table through that radio. If the chosen adapter cannot see the table, the connection fails with a clear error instead of silently using another scanner.
+
 ## 1.4.7
 
 - Pattern uploads wait for the table to be connected and to finish its handshake, then retry if it is slow to confirm the pattern was stored. Larger drawings get a longer wait, up to a minute. The error is always a clear sentence, not a blank popup.

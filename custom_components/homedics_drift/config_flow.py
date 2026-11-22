@@ -9,7 +9,9 @@ import voluptuous as vol
 
 from homeassistant.components.bluetooth import (
     BluetoothServiceInfoBleak,
+    async_current_scanners,
     async_discovered_service_info,
+    async_scanner_devices_by_address,
 )
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.const import CONF_ADDRESS
@@ -20,6 +22,7 @@ from .const import (
     CONF_CLEAN_BEFORE_AI,
     CONF_CONVERSATION_AGENT,
     CONF_PHOTO_CAMERA,
+    CONF_PREFERRED_ADAPTER,
     CONF_WEATHER_AFTER_PATTERN,
     CONF_WEATHER_ALERT,
     CONF_WEATHER_COLD,
@@ -33,6 +36,11 @@ from .const import (
     DOMAIN,
 )
 from .drawing import conversation_dropdown
+from .preferred_adapter import (
+    PREFERRED_ADAPTER_AUTO,
+    preferred_adapter_label,
+    preferred_adapter_value,
+)
 from .protocol import is_drift_name, normalize_advertised_name
 from .weather import (
     cold_threshold_value,
@@ -83,6 +91,68 @@ def _drift_name(discovery: BluetoothServiceInfoBleak) -> str | None:
     return None
 
 
+
+def _preferred_adapter_dropdown(
+    hass: Any, table_address: str, current: str
+) -> list[dict[str, str]]:
+    """Connectable scanners, labeled with name, source, and RSSI when known."""
+    options: list[dict[str, str]] = [
+        {"value": PREFERRED_ADAPTER_AUTO, "label": "Automatic"}
+    ]
+    rssi_by: dict[str, int] = {}
+    try:
+        if table_address:
+            for item in async_scanner_devices_by_address(
+                hass, table_address, connectable=True
+            ):
+                scanner = getattr(item, "scanner", None)
+                source = str(getattr(scanner, "source", "") or "").strip()
+                rssi = getattr(getattr(item, "advertisement", None), "rssi", None)
+                if source and rssi is not None:
+                    try:
+                        rssi_by[source.lower()] = int(rssi)
+                    except (TypeError, ValueError):
+                        pass
+    except Exception:
+        pass
+    seen = {PREFERRED_ADAPTER_AUTO}
+    try:
+        scanners = list(async_current_scanners(hass))
+    except Exception:
+        scanners = []
+    rows: list[tuple[str, str, int | None]] = []
+    for scanner in scanners:
+        if not getattr(scanner, "connectable", True):
+            continue
+        source = str(getattr(scanner, "source", "") or "").strip()
+        if not source:
+            continue
+        name = str(
+            getattr(scanner, "name", None)
+            or getattr(scanner, "adapter", None)
+            or source
+        )
+        rows.append((name, source, rssi_by.get(source.lower())))
+    rows.sort(key=lambda row: (row[0].lower(), row[1].lower()))
+    for name, source, rssi in rows:
+        key = source.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        options.append(
+            {
+                "value": source,
+                "label": preferred_adapter_label(name, source, rssi),
+            }
+        )
+    chosen = preferred_adapter_value(current)
+    if chosen != PREFERRED_ADAPTER_AUTO and chosen.lower() not in seen:
+        options.append(
+            {"value": chosen, "label": preferred_adapter_label(chosen, chosen)}
+        )
+    return options
+
+
 class DriftOptionsFlow(OptionsFlow):
     """AI drawing and weather drawing. No API key is stored."""
 
@@ -93,6 +163,9 @@ class DriftOptionsFlow(OptionsFlow):
         if user_input is not None:
             weather = weather_options_from(user_input)
             cleaned: dict[str, Any] = {
+                CONF_PREFERRED_ADAPTER: preferred_adapter_value(
+                    user_input.get(CONF_PREFERRED_ADAPTER)
+                ),
                 CONF_CLEAN_BEFORE_AI: bool(user_input.get(CONF_CLEAN_BEFORE_AI, True)),
                 CONF_WEATHER_UNIT: weather[CONF_WEATHER_UNIT],
                 CONF_WEATHER_ROTATION: weather[CONF_WEATHER_ROTATION],
@@ -127,7 +200,29 @@ class DriftOptionsFlow(OptionsFlow):
             agent_options = _conversation_agent_dropdown(self.hass)
         except Exception:
             agent_options = []
+        try:
+            adapter_options = _preferred_adapter_dropdown(
+                self.hass,
+                str(self.config_entry.data.get(CONF_ADDRESS, "") or ""),
+                preferred_adapter_value(current.get(CONF_PREFERRED_ADAPTER)),
+            )
+        except Exception:
+            adapter_options = [
+                {"value": PREFERRED_ADAPTER_AUTO, "label": "Automatic"}
+            ]
         schema: dict[Any, Any] = {
+            vol.Required(
+                CONF_PREFERRED_ADAPTER,
+                default=preferred_adapter_value(current.get(CONF_PREFERRED_ADAPTER)),
+            ): selector.selector(
+                {
+                    "select": {
+                        "options": adapter_options,
+                        "mode": "dropdown",
+                        "custom_value": False,
+                    }
+                }
+            ),
             vol.Required(
                 CONF_CLEAN_BEFORE_AI,
                 default=current.get(CONF_CLEAN_BEFORE_AI, True),
