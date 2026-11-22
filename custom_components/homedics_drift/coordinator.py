@@ -52,14 +52,15 @@ from .const import (
     NOTIFY_UUID,
     POWER_DEBOUNCE,
     READY_TIMEOUT,
-    UPLOAD_IDLE_WAIT_CLEAN,
-    UPLOAD_IDLE_WAIT_OTHER,
     UPLOAD_LINK_WAIT,
     UPLOAD_SETTLE_PAGES,
     UPLOAD_SETTLE_SECONDS,
     WEATHER_MAX_POINTS,
     WRITE_UUID,
+    should_pause_for_upload,
     store_confirm_timeout,
+    wait_for_pause_to_take,
+    UploadPauseAborted,
 )
 from .drawing import (
     build_instructions,
@@ -1126,48 +1127,43 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         except PatternRejected as err:
             raise HomeAssistantError(err.message) from err
         await self._async_wait_for_link()
-        await self._async_wait_until_idle()
-        while True:
-            async with self._command_lock:
-                if self._table_is_moving():
-                    pass
-                else:
-                    playing = self.data.pattern_id if self.data is not None else None
-                    if replace_idle and (self.data is None or not self.data.drawing):
-                        playing = None
-                    try:
-                        reuse = reusable_id(
-                            self.library.id_for_upload_name(cleaned),
-                            self.library.protected_ids(),
-                        )
-                        pattern_id = allocate_id(
-                            set(self.patterns.pattern_ids),
-                            playing=playing,
-                            reuse=reuse,
-                        )
-                    except PatternRejected as err:
-                        raise HomeAssistantError(err.message) from err
-                    await self._transfer(pattern_id, pages, progress=progress)
-                    preview = self._preview_path(pattern_id)
-                    try:
-                        png = await self.hass.async_add_executor_job(
-                            lambda: render_thr(text, view_rotation=preview_rotation)
-                        )
+        async with self._command_lock:
+            await self._async_pause_for_upload()
+            playing = self.data.pattern_id if self.data is not None else None
+            if replace_idle and (self.data is None or not self.data.drawing):
+                playing = None
+            try:
+                reuse = reusable_id(
+                    self.library.id_for_upload_name(cleaned),
+                    self.library.protected_ids(),
+                )
+                pattern_id = allocate_id(
+                    set(self.patterns.pattern_ids),
+                    playing=playing,
+                    reuse=reuse,
+                )
+            except PatternRejected as err:
+                raise HomeAssistantError(err.message) from err
+            await self._transfer(pattern_id, pages, progress=progress)
+            preview = self._preview_path(pattern_id)
+            try:
+                png = await self.hass.async_add_executor_job(
+                    lambda: render_thr(text, view_rotation=preview_rotation)
+                )
 
-                        def _write() -> None:
-                            preview.parent.mkdir(parents=True, exist_ok=True)
-                            preview.write_bytes(png)
+                def _write() -> None:
+                    preview.parent.mkdir(parents=True, exist_ok=True)
+                    preview.write_bytes(png)
 
-                        await self.hass.async_add_executor_job(_write)
-                    except Exception:
-                        _LOGGER.warning("Drift preview was not saved for pattern %s", pattern_id, exc_info=True)
-                    self.library.remember(pattern_id, cleaned, text, source)
-                    await self._save_library()
-                    self.preview_at = datetime.now(timezone.utc)
-                    self._publish()
-                    await self._scan_inbox(None)
-                    return pattern_id
-            await self._async_wait_until_idle()
+                await self.hass.async_add_executor_job(_write)
+            except Exception:
+                _LOGGER.warning("Drift preview was not saved for pattern %s", pattern_id, exc_info=True)
+            self.library.remember(pattern_id, cleaned, text, source)
+            await self._save_library()
+            self.preview_at = datetime.now(timezone.utc)
+            self._publish()
+            await self._scan_inbox(None)
+            return pattern_id
 
     async def _async_wait_for_link(self, timeout: float = UPLOAD_LINK_WAIT) -> None:
         """Wait until the table is connected and the handshake has finished."""
@@ -1195,34 +1191,35 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
     def _table_is_moving(self) -> bool:
         """True when the ball is still traveling, not paused at the end of a design."""
         data = self.data
-        if data is None or not data.drawing:
+        if data is None:
             return False
-        # Stop after can leave drawing=true at ~99%. The table is idle enough
-        # to receive an upload then.
-        return data.progress < 0.99
+        return should_pause_for_upload(drawing=bool(data.drawing), progress=data.progress)
 
-    async def _async_wait_until_idle(self) -> None:
-        """Wait until the table is not moving. Never start an upload during motion."""
+    async def _async_pause_for_upload(self) -> None:
+        """Pause a running pattern or playlist, then wait briefly for the ball to stop.
+
+        The table often loops a stored playlist, so it is never naturally idle.
+        ``play_pause`` is a toggle: only send it when the ball is actually moving.
+        Caller holds the command lock.
+        """
         if not self._table_is_moving():
             return
-        data = self.data
-        current_id = data.pattern_id if data is not None else None
-        seconds = (
-            UPLOAD_IDLE_WAIT_CLEAN
-            if current_id in self._clean_pattern_ids()
-            else UPLOAD_IDLE_WAIT_OTHER
-        )
-        deadline = asyncio.get_running_loop().time() + seconds
-        while self._table_is_moving() and asyncio.get_running_loop().time() < deadline:
-            if self._shut_down:
-                raise HomeAssistantError(DISCONNECTED_MESSAGE)
-            if not self.session_on:
-                raise HomeAssistantError("Drift power is off")
-            await asyncio.sleep(0.5)
-        if self._table_is_moving():
-            raise HomeAssistantError(
-                "The table is still drawing. Wait until it stops before uploading a pattern."
+        if self._shut_down:
+            raise HomeAssistantError(DISCONNECTED_MESSAGE)
+        if not self.session_on:
+            raise HomeAssistantError("Drift power is off")
+        await self.async_send(play_pause())
+        self._replace(status=0)
+        try:
+            await wait_for_pause_to_take(
+                is_moving=self._table_is_moving,
+                is_shut_down=lambda: self._shut_down,
+                is_powered=lambda: self.session_on,
             )
+        except UploadPauseAborted as err:
+            if err.reason == "disconnected":
+                raise HomeAssistantError(DISCONNECTED_MESSAGE) from err
+            raise HomeAssistantError("Drift power is off") from err
 
     async def _transfer(
         self,
@@ -1373,8 +1370,8 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
     async def _ensure_clean_id(self) -> int:
         """Stock clean pattern, or one tight spiral uploaded once and kept.
 
-        When a spiral must be uploaded, wait until the table is idle first,
-        and do that wait outside the command lock.
+        When a spiral must be uploaded, pause a running playlist first so the
+        table is still, then send the file.
         """
         if not self.session_on:
             raise HomeAssistantError("Drift power is off")
@@ -1382,17 +1379,13 @@ class DriftCoordinator(DataUpdateCoordinator[DriftState]):
         if ready is not None:
             return ready
         await self._async_wait_for_link()
-        await self._async_wait_until_idle()
         async with self._command_lock:
             if not self.session_on:
                 raise HomeAssistantError("Drift power is off")
             ready = self._ready_clean_id()
             if ready is not None:
                 return ready
-            if self._table_is_moving():
-                raise HomeAssistantError(
-                    "The table is still drawing. Wait until it stops before uploading a pattern."
-                )
+            await self._async_pause_for_upload()
             return await self._upload_clean_spiral()
 
     async def async_clean_sand(self) -> None:

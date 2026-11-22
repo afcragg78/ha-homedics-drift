@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.4.10
+
+- Before a pattern upload, the integration pauses the table with the same play/pause command the player already uses, then waits a few seconds for the ball to stop. A stored playlist that keeps drawing no longer blocks Weather or other uploads by waiting for the table to go idle on its own.
+- The 4-second settle after a large upload, the trailing or missing page resend, the 280-page weather cap, and the Preferred Bluetooth Adapter option are unchanged.
+
+
 ## 1.4.9
 
 - Pattern uploads wait until the table is idle before sending, up to 20 minutes when a clean is running and 15 minutes otherwise. A pattern is never uploaded while the ball is still moving.
