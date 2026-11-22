@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.9
+
+- Pattern uploads wait until the table is idle before sending, up to 20 minutes when a clean is running and 15 minutes otherwise. A pattern is never uploaded while the ball is still moving.
+- After a large upload (more than 150 pages), the integration pauses about four seconds so the table can settle before Clean or Play starts.
+- If the table is slow to confirm a stored pattern, or reports missing pages, only the trailing or missing pages are resent, the same way as 1.4.5. The error is still a clear sentence.
+- Weather drawings are capped at 280 pages. Longer paths are simplified while keeping the symbols and clearance, so a forecast upload stays in a size the table can store reliably.
+
+
 ## 1.4.8
 
 - Configure has a Preferred Bluetooth Adapter option. Automatic (the default) leaves the radio choice to Home Assistant, the same as before. Pick a specific connectable adapter or proxy, such as a USB dongle, to always connect the table through that radio. If the chosen adapter cannot see the table, the connection fails with a clear error instead of silently using another scanner.

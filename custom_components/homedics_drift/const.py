@@ -20,6 +20,15 @@ UPLOAD_LINK_WAIT: Final = 30.0
 UPLOAD_STORE_TIMEOUT: Final = 15.0
 UPLOAD_STORE_TIMEOUT_PER_PAGE: Final = 0.1
 UPLOAD_STORE_TIMEOUT_MAX: Final = 60.0
+# Wait for the ball to stop before an upload. Clean can take a long time.
+UPLOAD_IDLE_WAIT_CLEAN: Final = 20 * 60
+UPLOAD_IDLE_WAIT_OTHER: Final = 15 * 60
+# After a large upload, pause before Clean or Play so the table can settle.
+UPLOAD_SETTLE_PAGES: Final = 150
+UPLOAD_SETTLE_SECONDS: Final = 4.0
+# Weather drawings stay at or under this many 40-point pages.
+WEATHER_MAX_PAGES: Final = 280
+WEATHER_MAX_POINTS: Final = WEATHER_MAX_PAGES * 40
 BACKOFF_START: Final = 2.0
 BACKOFF_MAX: Final = 60.0
 # Rapid power taps become one absolute write of the last requested value.

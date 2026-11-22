@@ -90,24 +90,58 @@ def wire_point(theta: float, rho: float) -> tuple[int, int]:
     return milli // 6, rho_file // 2
 
 
-def thr_to_wire(text: str) -> list[tuple[int, int]]:
+
+def _limit_points(
+    points: list[tuple[float, float]], max_points: int
+) -> list[tuple[float, float]]:
+    """Keep the first and last points, and evenly spaced points in between."""
+    if len(points) <= max_points or max_points < 2:
+        return points[:max(0, max_points)]
+    last = len(points) - 1
+    kept: list[tuple[float, float]] = [points[0]]
+    for index in range(1, max_points - 1):
+        source = round(index * last / (max_points - 1))
+        if points[source] != kept[-1]:
+            kept.append(points[source])
+    if kept[-1] != points[-1]:
+        kept.append(points[-1])
+    return kept
+
+
+def _fit_polar(
+    source: list[tuple[float, float]], max_points: int
+) -> list[tuple[float, float]]:
+    """Densify a polar track, coarsening only when it would exceed ``max_points``."""
+    if len(source) < 2:
+        raise PatternRejected("the pattern file has no points")
+    step = 0.01
+    thinned = source
+    polar = densify(thinned, max_step=step)
+    while len(polar) > max_points and step < 0.12:
+        step *= 1.25
+        thinned = _thin_polar(source, step)
+        polar = densify(thinned, max_step=step)
+    if len(polar) > max_points:
+        polar = _limit_points(polar, max_points)
+    if len(polar) > max_points:
+        raise PatternRejected(
+            f"the pattern has {len(polar)} points; the limit is {max_points}"
+        )
+    return polar
+
+
+def thr_to_wire(
+    text: str, *, max_points: int = MAX_POINTS
+) -> list[tuple[int, int]]:
     """Parse, densify, and convert a ``.thr`` document to wire points.
 
-    A long track is resampled more coarsely until it fits the table. A short
-    track still uses the usual 0.01 step.
+    A long track is resampled more coarsely until it fits ``max_points``.
+    A short track still uses the usual 0.01 step.
     """
     source = parse_thr(text)
     if not source:
         raise PatternRejected("the pattern file has no points")
-    step = 0.01
-    polar = densify(source, max_step=step)
-    while len(polar) > MAX_POINTS and step < 0.06:
-        step *= 1.25
-        polar = densify(source, max_step=step)
-    if len(polar) > MAX_POINTS:
-        raise PatternRejected(
-            f"the pattern has {len(polar)} points; the limit is {MAX_POINTS}"
-        )
+    polar = _fit_polar(source, max_points)
     return [wire_point(theta, rho) for theta, rho in polar]
 
 
@@ -125,25 +159,12 @@ def _thin_polar(points: list[tuple[float, float]], spacing: float) -> list[tuple
     return kept
 
 
-def fit_thr_text(text: str) -> str:
+def fit_thr_text(text: str, *, max_points: int = MAX_POINTS) -> str:
     """A ``.thr`` document the table can store, coarsened only when it is too long."""
     source = parse_thr(text)
-    if len(source) < 2:
-        raise PatternRejected("the pattern file has no points")
-    step = 0.01
-    thinned = source
-    polar = densify(thinned, max_step=step)
-    while len(polar) > MAX_POINTS - 1000 and step < 0.06:
-        step *= 1.25
-        thinned = _thin_polar(source, step)
-        polar = densify(thinned, max_step=step)
-    if len(polar) > MAX_POINTS:
-        raise PatternRejected(
-            f"the pattern has {len(polar)} points; the limit is {MAX_POINTS}"
-        )
+    polar = _fit_polar(source, max_points)
     lines = [f"{theta:.6f} {min(1.0, max(0.0, rho)):.6f}" for theta, rho in polar]
     return "\n".join(lines) + "\n"
-
 
 IMPORT_EMPTY = (
     "Nothing from that link could be stored. "

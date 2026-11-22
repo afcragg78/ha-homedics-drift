@@ -210,4 +210,18 @@ def test_preview_is_a_png() -> None:
 
     png = render_thr("0 1\n1.57 0.2\n3.14 1\n")
     assert png.startswith(b"\x89PNG")
-    assert len(densify([(0.0, 0.0), (0.0, 1.0)])) > 2 
+    assert len(densify([(0.0, 0.0), (0.0, 1.0)])) > 2
+
+
+def test_fit_thr_text_and_wire_respect_a_lower_max_points() -> None:
+    """A long track can be coarsened to a requested cap, not only the table max."""
+    from custom_components.homedics_drift.patterns import fit_thr_text
+
+    # A dense outward spiral that would be far over 200 wire points at 0.01.
+    lines = [f"{index * 0.05:.6f} {min(1.0, index * 0.002):.6f}" for index in range(2000)]
+    text = "\n".join(lines) + "\n"
+    fitted = fit_thr_text(text, max_points=200)
+    assert len(parse_thr(fitted)) <= 200
+    wire = thr_to_wire(fitted, max_points=200)
+    assert len(wire) <= 200
+    assert len(wire) >= 2

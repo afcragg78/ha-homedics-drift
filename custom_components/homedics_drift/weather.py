@@ -12,6 +12,8 @@ from __future__ import annotations
 import math
 
 from . import weather_design
+from .const import WEATHER_MAX_POINTS
+from .patterns import fit_thr_text
 
 WEATHER_NAME = "Weather"
 
@@ -515,7 +517,7 @@ def render_weather_thr(
         path, _cap = weather_design.build(name, value)
     path = weather_design.densify(path)
     path = rotate_xy(path, rotation)
-    return xy_to_thr(path)
+    return fit_thr_text(xy_to_thr(path), max_points=WEATHER_MAX_POINTS)
 
 
 def _as_bool(value: object, default: bool) -> bool:

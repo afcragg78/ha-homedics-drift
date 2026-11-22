@@ -7,8 +7,10 @@ from pathlib import Path
 
 import pytest
 
+from custom_components.homedics_drift.const import WEATHER_MAX_PAGES, WEATHER_MAX_POINTS
 from custom_components.homedics_drift.patterns import (
     MAX_POINTS,
+    PAGE_SIZE,
     PatternLibrary,
     parse_thr,
     thr_to_wire,
@@ -287,8 +289,9 @@ def test_each_picture_fits_on_the_table(condition: str) -> None:
     parsed = parse_thr(text)
     thetas = [theta for theta, _rho in parsed]
     assert all(abs(b - a) < math.pi for a, b in zip(thetas, thetas[1:]))
-    wire = thr_to_wire(text)
-    assert 10_000 < len(wire) < MAX_POINTS
+    wire = thr_to_wire(text, max_points=WEATHER_MAX_POINTS)
+    assert 0 < len(wire) <= WEATHER_MAX_POINTS
+    assert math.ceil(len(wire) / PAGE_SIZE) <= WEATHER_MAX_PAGES
     length = 0.0
     previous = parsed[0]
     for theta, rho in parsed[1:]:
@@ -298,11 +301,31 @@ def test_each_picture_fits_on_the_table(condition: str) -> None:
     assert length / 0.115 / 60 < 17
 
 
+# Digit widths and panel shapes that can change the path length.
+WEATHER_CAP_TEMPERATURES = (
+    -99, -80, -40, -20, -11, -10, -9, -5, -1,
+    0, 1, 5, 9, 10, 11, 19, 20, 25, 32, 40, 55, 72, 88, 90, 99,
+    100, 101, 110, 111, 155, 188, 199,
+)
+
+
+@pytest.mark.parametrize("condition", DRAWINGS)
+@pytest.mark.parametrize("temperature", WEATHER_CAP_TEMPERATURES)
+def test_every_weather_picture_and_temperature_stays_under_the_page_cap(
+    condition: str, temperature: int
+) -> None:
+    text = render_weather_thr(condition, temperature, 0, panel_only=False)
+    wire = thr_to_wire(text, max_points=WEATHER_MAX_POINTS)
+    pages = math.ceil(len(wire) / PAGE_SIZE)
+    assert len(wire) <= WEATHER_MAX_POINTS
+    assert pages <= WEATHER_MAX_PAGES
+
+
 def test_temperature_panel_is_shorter_than_the_whole_picture() -> None:
-    full = len(thr_to_wire(render_weather_thr("sunny", 72, 0, panel_only=False)))
-    panel = len(thr_to_wire(render_weather_thr("sunny", 75, 0, panel_only=True)))
+    full = len(thr_to_wire(render_weather_thr("sunny", 72, 0, panel_only=False), max_points=WEATHER_MAX_POINTS))
+    panel = len(thr_to_wire(render_weather_thr("sunny", 75, 0, panel_only=True), max_points=WEATHER_MAX_POINTS))
     assert 0 < panel < full
-    assert panel < MAX_POINTS
+    assert panel <= WEATHER_MAX_POINTS
 
 
 def test_options_default_to_auto_unit_no_rotation_and_weather_off() -> None:
